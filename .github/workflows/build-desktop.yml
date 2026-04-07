@@ -21,11 +21,7 @@ on:
 jobs:
   build:
     name: ${{ matrix.name }}
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == matrix.target }}
     runs-on: ${{ matrix.os }}
-    env:
-      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     strategy:
       fail-fast: false
       matrix:
@@ -50,28 +46,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore Electron caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.ELECTRON_CACHE }}
-            ${{ env.ELECTRON_BUILDER_CACHE }}
-          key: ${{ runner.os }}-electron-cache-${{ hashFiles('package-lock.json') }}
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == matrix.target }}
         with:
           node-version: 22
           cache: npm
 
       - name: Install dependencies
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == matrix.target }}
         run: npm ci
 
       - name: Build and package
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == matrix.target }}
         run: npm run ${{ matrix.dist_script }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == matrix.target }}
         with:
           name: ${{ matrix.artifact_name }}
           path: |

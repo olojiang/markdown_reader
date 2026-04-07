@@ -13,9 +13,6 @@ jobs:
     name: Release ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    env:
-      ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     strategy:
       fail-fast: false
       matrix:
@@ -36,14 +33,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Restore Electron caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.ELECTRON_CACHE }}
-            ${{ env.ELECTRON_BUILDER_CACHE }}
-          key: ${{ runner.os }}-electron-release-cache-${{ hashFiles('package-lock.json') }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
