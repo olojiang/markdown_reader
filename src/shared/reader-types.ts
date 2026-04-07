@@ -15,6 +15,13 @@ export interface ReaderPosition {
   scrollTop: number
 }
 
+export interface ReaderLastOpenedSession {
+  sourceType: 'path' | 'cachedText'
+  sourceKey: string
+  sourceLabel: string
+  filePath?: string
+}
+
 export type ReaderThemeKey = 'day' | 'night' | 'eyeCare'
 
 export interface ReaderPreference {

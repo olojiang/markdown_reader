@@ -104,4 +104,47 @@ describe('createReaderStore', () => {
     expect(preference.fontColor).toBe('#2f3a25')
     expect(preference.backgroundColor).toBe('#dce8c8')
   })
+
+  it('persists and reloads last opened session', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'md-reader-store-'))
+    const store = createReaderStore(join(tempDir, 'reader-store.json'))
+
+    await store.saveLastOpenedSession({
+      sourceType: 'path',
+      sourceKey: '/book/a.md',
+      sourceLabel: 'a.md',
+      filePath: '/book/a.md'
+    })
+
+    const value = await store.loadLastOpenedSession()
+    expect(value).toEqual({
+      sourceType: 'path',
+      sourceKey: '/book/a.md',
+      sourceLabel: 'a.md',
+      filePath: '/book/a.md'
+    })
+  })
+
+  it('ignores invalid last opened session structure', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'md-reader-store-'))
+    const storagePath = join(tempDir, 'reader-store.json')
+
+    await writeFile(
+      storagePath,
+      JSON.stringify({
+        positions: {},
+        preference: DEFAULT_READER_PREFERENCE,
+        lastOpenedSession: {
+          sourceType: 'path',
+          sourceKey: '/book/a.md',
+          sourceLabel: 'a.md'
+        }
+      }),
+      'utf-8'
+    )
+
+    const store = createReaderStore(storagePath)
+    const value = await store.loadLastOpenedSession()
+    expect(value).toBeNull()
+  })
 })

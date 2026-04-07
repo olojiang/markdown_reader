@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { ReaderPreference, ReaderPosition } from '../shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '../shared/reader-types'
 
 const electronAPI = {
   pickMarkdownFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickMarkdownFile'),
@@ -9,7 +9,10 @@ const electronAPI = {
   saveReaderPosition: (filePath: string, value: ReaderPosition): Promise<void> =>
     ipcRenderer.invoke('reader:savePosition', filePath, value),
   loadReaderPreference: (): Promise<ReaderPreference | null> => ipcRenderer.invoke('reader:loadPreference'),
-  saveReaderPreference: (value: ReaderPreference): Promise<void> => ipcRenderer.invoke('reader:savePreference', value)
+  saveReaderPreference: (value: ReaderPreference): Promise<void> => ipcRenderer.invoke('reader:savePreference', value),
+  loadLastOpenedSession: (): Promise<ReaderLastOpenedSession | null> => ipcRenderer.invoke('reader:loadLastOpenedSession'),
+  saveLastOpenedSession: (value: ReaderLastOpenedSession | null): Promise<void> =>
+    ipcRenderer.invoke('reader:saveLastOpenedSession', value)
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

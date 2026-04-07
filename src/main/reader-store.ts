@@ -3,11 +3,12 @@ import { dirname } from 'node:path'
 
 import { DEFAULT_READER_PREFERENCE } from '../shared/reader-defaults'
 import { getReaderThemeOption, READER_THEME_OPTIONS } from '../shared/reader-themes'
-import type { ReaderPreference, ReaderPosition, ReaderThemeKey } from '../shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderThemeKey } from '../shared/reader-types'
 
 interface ReaderStoreData {
   positions: Record<string, ReaderPosition>
   preference: ReaderPreference
+  lastOpenedSession: ReaderLastOpenedSession | null
 }
 
 export { DEFAULT_READER_PREFERENCE }
@@ -35,11 +36,24 @@ export function createReaderStore(storagePath: string) {
     await writeStoreData(storagePath, data)
   }
 
+  async function loadLastOpenedSession(): Promise<ReaderLastOpenedSession | null> {
+    const data = await readStoreData(storagePath)
+    return data.lastOpenedSession
+  }
+
+  async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Promise<void> {
+    const data = await readStoreData(storagePath)
+    data.lastOpenedSession = value
+    await writeStoreData(storagePath, data)
+  }
+
   return {
     loadPosition,
     savePosition,
     loadPreference,
-    savePreference
+    savePreference,
+    loadLastOpenedSession,
+    saveLastOpenedSession
   }
 }
 
@@ -50,12 +64,14 @@ async function readStoreData(storagePath: string): Promise<ReaderStoreData> {
 
     return {
       positions: parsed.positions ?? {},
-      preference: normalizeStoredPreference(parsed.preference)
+      preference: normalizeStoredPreference(parsed.preference),
+      lastOpenedSession: normalizeLastOpenedSession(parsed.lastOpenedSession)
     }
   } catch {
     return {
       positions: {},
-      preference: DEFAULT_READER_PREFERENCE
+      preference: DEFAULT_READER_PREFERENCE,
+      lastOpenedSession: null
     }
   }
 }
@@ -102,4 +118,38 @@ function normalizeStoredPreference(rawPreference?: Partial<ReaderPreference>): R
 
 function isReaderThemeKey(value: unknown): value is ReaderThemeKey {
   return typeof value === 'string' && READER_THEME_OPTIONS.some((item) => item.key === value)
+}
+
+function normalizeLastOpenedSession(rawValue: unknown): ReaderLastOpenedSession | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null
+  }
+
+  const candidate = rawValue as Partial<ReaderLastOpenedSession>
+  if (candidate.sourceType !== 'path' && candidate.sourceType !== 'cachedText') {
+    return null
+  }
+
+  if (typeof candidate.sourceKey !== 'string' || typeof candidate.sourceLabel !== 'string') {
+    return null
+  }
+
+  if (candidate.sourceType === 'path') {
+    if (typeof candidate.filePath !== 'string' || candidate.filePath.length === 0) {
+      return null
+    }
+
+    return {
+      sourceType: 'path',
+      sourceKey: candidate.sourceKey,
+      sourceLabel: candidate.sourceLabel,
+      filePath: candidate.filePath
+    }
+  }
+
+  return {
+    sourceType: 'cachedText',
+    sourceKey: candidate.sourceKey,
+    sourceLabel: candidate.sourceLabel
+  }
 }

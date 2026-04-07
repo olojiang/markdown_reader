@@ -4,7 +4,13 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { parseMarkdownDocument } from '@shared/markdown-parser'
 import { DEFAULT_READER_PREFERENCE } from '@shared/reader-defaults'
 import { READER_THEME_OPTIONS } from '@shared/reader-themes'
-import type { ParsedDocument, ReaderPosition, ReaderPreference, ReaderThemeKey } from '@shared/reader-types'
+import type {
+  ParsedDocument,
+  ReaderLastOpenedSession,
+  ReaderPosition,
+  ReaderPreference,
+  ReaderThemeKey
+} from '@shared/reader-types'
 
 import ChapterList from './components/ChapterList.vue'
 import ReaderArticle from './components/ReaderArticle.vue'
@@ -15,6 +21,21 @@ const sampleFilePath =
 
 const READER_PREFERENCE_STORAGE_KEY = 'md-reader-preference-v1'
 const READER_POSITION_STORAGE_KEY = 'md-reader-position-v1'
+const READER_LAST_OPENED_STORAGE_KEY = 'md-reader-last-opened-v1'
+const READER_LAST_BOOK_TEXT_STORAGE_KEY = 'md-reader-last-book-text-v1'
+
+const READER_CACHE_DB_NAME = 'md-reader-cache-db'
+const READER_CACHE_STORE_NAME = 'reader-cache-store'
+const READER_CACHE_LAST_BOOK_KEY = 'last-book-v1'
+
+const COMPACT_LAYOUT_MEDIA_QUERY = '(max-width: 900px)'
+
+interface ReaderCachedBookSnapshot {
+  sourceKey: string
+  sourceLabel: string
+  markdownText: string
+  savedAt: number
+}
 
 const mdReaderPathInputModel = ref(sampleFilePath)
 const mdReaderCurrentSourceKey = ref('')
@@ -25,6 +46,8 @@ const mdReaderLatestScrollTop = ref(0)
 const mdReaderPreference = ref<ReaderPreference>({ ...DEFAULT_READER_PREFERENCE })
 const mdReaderStatusText = ref('请选择 Markdown 文件，或在桌面端输入路径打开。')
 const mdReaderIsLoading = ref(false)
+const mdReaderIsCompactLayout = ref(false)
+const mdReaderIsConfigOpen = ref(false)
 const mdReaderWebFileInputRef = ref<HTMLInputElement | null>(null)
 const mdReaderSupportsPathOpen = computed(() => Boolean(window.electronAPI))
 
@@ -32,6 +55,13 @@ const mdReaderChapterItems = computed(() => mdReaderParsedDocument.value?.chapte
 const mdReaderCurrentChapter = computed(() => mdReaderChapterItems.value[mdReaderActiveChapterIndex.value] ?? null)
 const mdReaderHasPreviousChapter = computed(() => mdReaderActiveChapterIndex.value > 0)
 const mdReaderHasNextChapter = computed(() => mdReaderActiveChapterIndex.value < mdReaderChapterItems.value.length - 1)
+const mdReaderHasLoadedDocument = computed(() => mdReaderParsedDocument.value !== null)
+const mdReaderCompactReadingMode = computed(
+  () => mdReaderIsCompactLayout.value && mdReaderHasLoadedDocument.value && !mdReaderIsConfigOpen.value
+)
+const mdReaderShowsConfigPanel = computed(
+  () => !mdReaderIsCompactLayout.value || mdReaderIsConfigOpen.value || !mdReaderHasLoadedDocument.value
+)
 const mdReaderChapterProgressText = computed(() => {
   if (mdReaderChapterItems.value.length === 0) {
     return '未加载章节'
@@ -39,16 +69,22 @@ const mdReaderChapterProgressText = computed(() => {
 
   return `第 ${mdReaderActiveChapterIndex.value + 1} / ${mdReaderChapterItems.value.length} 章`
 })
+const mdReaderPrevButtonText = computed(() => (mdReaderIsCompactLayout.value ? '上一章' : '上一章（Ctrl+←）'))
+const mdReaderNextButtonText = computed(() => (mdReaderIsCompactLayout.value ? '下一章' : '下一章（Ctrl+→）'))
 
 let savePositionTimer: number | null = null
+let compactLayoutMediaQuery: MediaQueryList | null = null
 
 onMounted(() => {
+  setupCompactLayoutWatcher()
   void loadPreference()
+  void restoreLastReadingSession()
   window.addEventListener('keydown', handleGlobalKeydown)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
+  teardownCompactLayoutWatcher()
 
   if (savePositionTimer !== null) {
     window.clearTimeout(savePositionTimer)
@@ -57,6 +93,48 @@ onBeforeUnmount(() => {
 
   void persistReaderPosition(mdReaderLatestScrollTop.value)
 })
+
+function setupCompactLayoutWatcher(): void {
+  compactLayoutMediaQuery = window.matchMedia(COMPACT_LAYOUT_MEDIA_QUERY)
+  mdReaderIsCompactLayout.value = compactLayoutMediaQuery.matches
+
+  if (typeof compactLayoutMediaQuery.addEventListener === 'function') {
+    compactLayoutMediaQuery.addEventListener('change', handleCompactLayoutChange)
+    return
+  }
+
+  compactLayoutMediaQuery.addListener(handleCompactLayoutChange)
+}
+
+function teardownCompactLayoutWatcher(): void {
+  if (!compactLayoutMediaQuery) {
+    return
+  }
+
+  if (typeof compactLayoutMediaQuery.removeEventListener === 'function') {
+    compactLayoutMediaQuery.removeEventListener('change', handleCompactLayoutChange)
+  } else {
+    compactLayoutMediaQuery.removeListener(handleCompactLayoutChange)
+  }
+
+  compactLayoutMediaQuery = null
+}
+
+function handleCompactLayoutChange(event: MediaQueryListEvent): void {
+  mdReaderIsCompactLayout.value = event.matches
+
+  if (!event.matches) {
+    mdReaderIsConfigOpen.value = false
+  }
+}
+
+function openReaderConfig(): void {
+  mdReaderIsConfigOpen.value = true
+}
+
+function closeReaderConfig(): void {
+  mdReaderIsConfigOpen.value = false
+}
 
 async function openMarkdownByDialog(): Promise<void> {
   if (!mdReaderSupportsPathOpen.value) {
@@ -141,9 +219,76 @@ async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markd
     mdReaderRestoredScrollTop.value = Math.max(savedPosition?.scrollTop ?? 0, 0)
     mdReaderLatestScrollTop.value = mdReaderRestoredScrollTop.value
 
+    await saveLastOpenedSession(buildLastOpenedSession(sourceKey, sourceLabel))
+
+    if (!mdReaderSupportsPathOpen.value) {
+      await saveLastBookSnapshot({
+        sourceKey,
+        sourceLabel,
+        markdownText,
+        savedAt: Date.now()
+      })
+    }
+
     mdReaderStatusText.value = `已加载：${sourceLabel}（${chapterLength} 章）`
+
+    if (mdReaderIsCompactLayout.value && chapterLength > 0) {
+      closeReaderConfig()
+    }
   } finally {
     mdReaderIsLoading.value = false
+  }
+}
+
+function buildLastOpenedSession(sourceKey: string, sourceLabel: string): ReaderLastOpenedSession {
+  if (mdReaderSupportsPathOpen.value) {
+    return {
+      sourceType: 'path',
+      sourceKey,
+      sourceLabel,
+      filePath: sourceKey
+    }
+  }
+
+  return {
+    sourceType: 'cachedText',
+    sourceKey,
+    sourceLabel
+  }
+}
+
+async function restoreLastReadingSession(): Promise<void> {
+  const lastOpened = await loadLastOpenedSession()
+
+  if (!lastOpened) {
+    return
+  }
+
+  if (lastOpened.sourceType === 'path' && mdReaderSupportsPathOpen.value && lastOpened.filePath) {
+    mdReaderPathInputModel.value = lastOpened.filePath
+
+    try {
+      await loadMarkdownFile(lastOpened.filePath)
+      mdReaderStatusText.value = `已自动恢复：${lastOpened.sourceLabel}`
+    } catch {
+      mdReaderStatusText.value = `未能自动恢复上次文件：${lastOpened.sourceLabel}`
+    }
+
+    return
+  }
+
+  if (lastOpened.sourceType === 'cachedText' && !mdReaderSupportsPathOpen.value) {
+    const snapshot = await loadLastBookSnapshot()
+    if (!snapshot) {
+      return
+    }
+
+    if (snapshot.sourceKey !== lastOpened.sourceKey) {
+      return
+    }
+
+    await loadMarkdownContent(snapshot.sourceKey, snapshot.sourceLabel, snapshot.markdownText)
+    mdReaderStatusText.value = `已自动恢复：${snapshot.sourceLabel}`
   }
 }
 
@@ -158,6 +303,10 @@ async function handleChapterSwitch(index: number): Promise<void> {
   mdReaderLatestScrollTop.value = 0
 
   await persistReaderPosition(0)
+
+  if (mdReaderIsCompactLayout.value) {
+    closeReaderConfig()
+  }
 }
 
 async function goToPreviousChapter(): Promise<void> {
@@ -228,7 +377,7 @@ async function saveReaderPosition(sourceKey: string, value: ReaderPosition): Pro
 
   const positions = loadWebStorePositions()
   positions[sourceKey] = value
-  localStorage.setItem(READER_POSITION_STORAGE_KEY, JSON.stringify(positions))
+  safeLocalStorageSet(READER_POSITION_STORAGE_KEY, JSON.stringify(positions))
 }
 
 async function loadReaderPreference(): Promise<ReaderPreference | null> {
@@ -236,7 +385,7 @@ async function loadReaderPreference(): Promise<ReaderPreference | null> {
     return window.electronAPI.loadReaderPreference()
   }
 
-  const raw = localStorage.getItem(READER_PREFERENCE_STORAGE_KEY)
+  const raw = safeLocalStorageGet(READER_PREFERENCE_STORAGE_KEY)
   if (!raw) {
     return null
   }
@@ -254,11 +403,119 @@ async function saveReaderPreference(value: ReaderPreference): Promise<void> {
     return
   }
 
-  localStorage.setItem(READER_PREFERENCE_STORAGE_KEY, JSON.stringify(value))
+  safeLocalStorageSet(READER_PREFERENCE_STORAGE_KEY, JSON.stringify(value))
+}
+
+async function loadLastOpenedSession(): Promise<ReaderLastOpenedSession | null> {
+  if (mdReaderSupportsPathOpen.value) {
+    return window.electronAPI.loadLastOpenedSession()
+  }
+
+  const raw = safeLocalStorageGet(READER_LAST_OPENED_STORAGE_KEY)
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return normalizeLastOpenedSession(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Promise<void> {
+  if (mdReaderSupportsPathOpen.value) {
+    await window.electronAPI.saveLastOpenedSession(value)
+    return
+  }
+
+  if (!value) {
+    safeLocalStorageRemove(READER_LAST_OPENED_STORAGE_KEY)
+    return
+  }
+
+  safeLocalStorageSet(READER_LAST_OPENED_STORAGE_KEY, JSON.stringify(value))
+}
+
+async function loadLastBookSnapshot(): Promise<ReaderCachedBookSnapshot | null> {
+  const indexedValue = await readReaderCacheValue(READER_CACHE_LAST_BOOK_KEY)
+  const normalizedIndexed = normalizeCachedBookSnapshot(indexedValue)
+
+  if (normalizedIndexed) {
+    return normalizedIndexed
+  }
+
+  const raw = safeLocalStorageGet(READER_LAST_BOOK_TEXT_STORAGE_KEY)
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return normalizeCachedBookSnapshot(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+async function saveLastBookSnapshot(value: ReaderCachedBookSnapshot): Promise<void> {
+  await writeReaderCacheValue(READER_CACHE_LAST_BOOK_KEY, value)
+  safeLocalStorageSet(READER_LAST_BOOK_TEXT_STORAGE_KEY, JSON.stringify(value))
+}
+
+function normalizeLastOpenedSession(raw: unknown): ReaderLastOpenedSession | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const candidate = raw as Partial<ReaderLastOpenedSession>
+  if (candidate.sourceType !== 'path' && candidate.sourceType !== 'cachedText') {
+    return null
+  }
+
+  if (typeof candidate.sourceKey !== 'string' || typeof candidate.sourceLabel !== 'string') {
+    return null
+  }
+
+  if (candidate.sourceType === 'path') {
+    if (typeof candidate.filePath !== 'string' || candidate.filePath.length === 0) {
+      return null
+    }
+
+    return {
+      sourceType: 'path',
+      sourceKey: candidate.sourceKey,
+      sourceLabel: candidate.sourceLabel,
+      filePath: candidate.filePath
+    }
+  }
+
+  return {
+    sourceType: 'cachedText',
+    sourceKey: candidate.sourceKey,
+    sourceLabel: candidate.sourceLabel
+  }
+}
+
+function normalizeCachedBookSnapshot(raw: unknown): ReaderCachedBookSnapshot | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const candidate = raw as Partial<ReaderCachedBookSnapshot>
+  if (typeof candidate.sourceKey !== 'string' || typeof candidate.sourceLabel !== 'string' || typeof candidate.markdownText !== 'string') {
+    return null
+  }
+
+  return {
+    sourceKey: candidate.sourceKey,
+    sourceLabel: candidate.sourceLabel,
+    markdownText: candidate.markdownText,
+    savedAt: typeof candidate.savedAt === 'number' ? candidate.savedAt : Date.now()
+  }
 }
 
 function loadWebStorePositions(): Record<string, ReaderPosition> {
-  const raw = localStorage.getItem(READER_POSITION_STORAGE_KEY)
+  const raw = safeLocalStorageGet(READER_POSITION_STORAGE_KEY)
   if (!raw) {
     return {}
   }
@@ -268,6 +525,97 @@ function loadWebStorePositions(): Record<string, ReaderPosition> {
     return parsed ?? {}
   } catch {
     return {}
+  }
+}
+
+async function readReaderCacheValue(key: string): Promise<unknown | null> {
+  const database = await openReaderCacheDb()
+  if (!database) {
+    return null
+  }
+
+  try {
+    return await new Promise<unknown | null>((resolve) => {
+      const transaction = database.transaction(READER_CACHE_STORE_NAME, 'readonly')
+      const store = transaction.objectStore(READER_CACHE_STORE_NAME)
+      const request = store.get(key)
+
+      request.onsuccess = () => {
+        resolve(request.result ?? null)
+      }
+
+      request.onerror = () => {
+        resolve(null)
+      }
+    })
+  } finally {
+    database.close()
+  }
+}
+
+async function writeReaderCacheValue(key: string, value: unknown): Promise<void> {
+  const database = await openReaderCacheDb()
+  if (!database) {
+    return
+  }
+
+  try {
+    await new Promise<void>((resolve) => {
+      const transaction = database.transaction(READER_CACHE_STORE_NAME, 'readwrite')
+      const store = transaction.objectStore(READER_CACHE_STORE_NAME)
+      store.put(value, key)
+
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => resolve()
+      transaction.onabort = () => resolve()
+    })
+  } finally {
+    database.close()
+  }
+}
+
+function openReaderCacheDb(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') {
+      resolve(null)
+      return
+    }
+
+    const request = indexedDB.open(READER_CACHE_DB_NAME, 1)
+
+    request.onupgradeneeded = () => {
+      const database = request.result
+      if (!database.objectStoreNames.contains(READER_CACHE_STORE_NAME)) {
+        database.createObjectStore(READER_CACHE_STORE_NAME)
+      }
+    }
+
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => resolve(null)
+  })
+}
+
+function safeLocalStorageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Ignore storage quota and environment exceptions to keep reader usable.
+  }
+}
+
+function safeLocalStorageRemove(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // Ignore storage exceptions.
   }
 }
 
@@ -324,12 +672,14 @@ function clampNumber(value: number, min: number, max: number): number {
 </script>
 
 <template>
-  <div class="md-reader-app-root">
+  <div class="md-reader-app-root" :class="{ 'md-reader-app-root-compact-reading': mdReaderCompactReadingMode }">
     <header class="md-reader-header-section">
       <h1 class="md-reader-header-title">纪 Reader</h1>
-      <p class="md-reader-header-description">可按标题分章阅读，支持记录阅读进度与样式偏好。</p>
+      <p v-if="mdReaderShowsConfigPanel || !mdReaderHasLoadedDocument" class="md-reader-header-description">
+        可按标题分章阅读，支持记录阅读进度与样式偏好。
+      </p>
 
-      <details class="md-reader-header-panel-details" open>
+      <details v-if="mdReaderShowsConfigPanel" class="md-reader-header-panel-details" open>
         <summary class="md-reader-header-panel-summary">文件与阅读控制</summary>
 
         <section class="md-reader-header-panel-content-section" aria-label="文件加载与状态">
@@ -361,14 +711,14 @@ function clampNumber(value: number, min: number, max: number): number {
               @change="handleWebFileInputChange"
             />
           </form>
-
-          <p class="md-reader-open-status-text" role="status">{{ mdReaderStatusText }}</p>
         </section>
       </details>
+
+      <p class="md-reader-open-status-text" role="status">{{ mdReaderStatusText }}</p>
     </header>
 
-    <div class="md-reader-workspace-shell">
-      <aside class="md-reader-workspace-sidebar">
+    <div class="md-reader-workspace-shell" :class="{ 'md-reader-workspace-shell-reading-only': mdReaderCompactReadingMode }">
+      <aside v-if="mdReaderShowsConfigPanel" class="md-reader-workspace-sidebar">
         <details class="md-reader-sidebar-panel-details" open>
           <summary class="md-reader-sidebar-panel-summary">目录</summary>
           <section class="md-reader-sidebar-panel-content-section" aria-label="目录面板">
@@ -397,16 +747,18 @@ function clampNumber(value: number, min: number, max: number): number {
         <footer class="md-reader-workspace-navigation-footer">
           <nav class="md-reader-workspace-navigation-nav" aria-label="章节切换">
             <button type="button" class="md-reader-workspace-navigation-button" :disabled="!mdReaderHasPreviousChapter" @click="goToPreviousChapter">
-              上一章（Ctrl+←）
+              {{ mdReaderPrevButtonText }}
             </button>
             <p class="md-reader-workspace-navigation-progress">{{ mdReaderChapterProgressText }}</p>
             <button type="button" class="md-reader-workspace-navigation-button" :disabled="!mdReaderHasNextChapter" @click="goToNextChapter">
-              下一章（Ctrl+→）
+              {{ mdReaderNextButtonText }}
             </button>
           </nav>
         </footer>
       </main>
     </div>
+
+    <button v-if="mdReaderCompactReadingMode" type="button" class="md-reader-floating-config-button" @click="openReaderConfig">配置</button>
   </div>
 </template>
 
@@ -436,8 +788,13 @@ function clampNumber(value: number, min: number, max: number): number {
   font-family: 'Source Han Serif SC', 'PingFang SC', serif;
 }
 
+.md-reader-app-root-compact-reading {
+  padding: 10px;
+  gap: 10px;
+}
+
 .md-reader-header-section {
-  padding: 16px;
+  padding: 14px;
   border-radius: 12px;
   border: 1px solid #d8cfbb;
   background: rgba(255, 255, 255, 0.72);
@@ -500,7 +857,8 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-submit-button,
 .md-reader-open-form-dialog-button,
-.md-reader-workspace-navigation-button {
+.md-reader-workspace-navigation-button,
+.md-reader-floating-config-button {
   min-height: 36px;
   padding: 0 14px;
   border: 1px solid #7f755a;
@@ -589,20 +947,57 @@ function clampNumber(value: number, min: number, max: number): number {
   font-weight: 600;
 }
 
+.md-reader-floating-config-button {
+  position: fixed;
+  right: 16px;
+  bottom: 18px;
+  z-index: 20;
+  background: #f8f2e1;
+  box-shadow: 0 4px 14px rgba(47, 39, 22, 0.2);
+}
+
 @media (max-width: 900px) {
+  .md-reader-app-root {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .md-reader-header-section {
+    padding: 12px;
+  }
+
   .md-reader-workspace-shell {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
   }
 
+  .md-reader-workspace-shell-reading-only {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .md-reader-workspace-sidebar {
+    max-height: 44vh;
+    padding-right: 0;
+  }
+
   .md-reader-workspace-main {
-    min-height: 60vh;
+    min-height: 0;
   }
 
   .md-reader-workspace-navigation-nav {
-    flex-direction: column;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .md-reader-workspace-navigation-button {
+    width: 100%;
+  }
+
+  .md-reader-workspace-navigation-progress {
+    text-align: center;
   }
 }
 </style>

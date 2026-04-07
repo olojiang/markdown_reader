@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 
-import type { ReaderPreference, ReaderPosition } from '../shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '../shared/reader-types'
 
 import { createReaderStore } from './reader-store'
 
@@ -73,6 +73,14 @@ app.whenReady().then(() => {
 
   ipcMain.handle('reader:savePreference', async (_, value: ReaderPreference): Promise<void> => {
     await readerStore.savePreference(value)
+  })
+
+  ipcMain.handle('reader:loadLastOpenedSession', async (): Promise<ReaderLastOpenedSession | null> => {
+    return readerStore.loadLastOpenedSession()
+  })
+
+  ipcMain.handle('reader:saveLastOpenedSession', async (_, value: ReaderLastOpenedSession | null): Promise<void> => {
+    await readerStore.saveLastOpenedSession(value)
   })
 
   createWindow()

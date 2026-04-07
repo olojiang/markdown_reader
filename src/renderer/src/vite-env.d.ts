@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { ReaderPreference, ReaderPosition } from '@shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '@shared/reader-types'
 
 declare global {
   interface Window {
@@ -11,6 +11,8 @@ declare global {
       saveReaderPosition: (filePath: string, value: ReaderPosition) => Promise<void>
       loadReaderPreference: () => Promise<ReaderPreference | null>
       saveReaderPreference: (value: ReaderPreference) => Promise<void>
+      loadLastOpenedSession: () => Promise<ReaderLastOpenedSession | null>
+      saveLastOpenedSession: (value: ReaderLastOpenedSession | null) => Promise<void>
     }
   }
 }
