@@ -105,3 +105,55 @@ jobs:
         run: gh release upload "${{ github.event.release.tag_name }}" "android/app/build/outputs/apk/release/markdown-reader-${{ github.event.release.tag_name }}-android-release.apk" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ios:
+    name: Release iOS IPA (unsigned)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync iOS project
+        run: npm run ios:sync
+
+      - name: Build unsigned iOS app
+        run: |
+          VERSION_NAME="${{ github.event.release.tag_name }}"
+          VERSION_NAME="${VERSION_NAME#v}"
+          VERSION_CODE="${{ github.run_number }}"
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath ios/DerivedData \
+            MARKETING_VERSION="$VERSION_NAME" \
+            CURRENT_PROJECT_VERSION="$VERSION_CODE" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA for release
+        run: |
+          APP_PATH=$(find ios/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -print -quit)
+          mkdir -p ios/output/Payload
+          cp -R "$APP_PATH" ios/output/Payload/
+          cd ios/output
+          zip -qry "markdown-reader-${{ github.event.release.tag_name }}-ios-unsigned.ipa" Payload
+
+      - name: Upload iOS IPA to release
+        run: gh release upload "${{ github.event.release.tag_name }}" "ios/output/markdown-reader-${{ github.event.release.tag_name }}-ios-unsigned.ipa" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
