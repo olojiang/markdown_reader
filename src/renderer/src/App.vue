@@ -71,6 +71,8 @@ const mdReaderChapterProgressText = computed(() => {
 })
 const mdReaderPrevButtonText = computed(() => (mdReaderIsCompactLayout.value ? '上一章' : '上一章（Ctrl+←）'))
 const mdReaderNextButtonText = computed(() => (mdReaderIsCompactLayout.value ? '下一章' : '下一章（Ctrl+→）'))
+const mdReaderShowFloatingConfigButton = computed(() => mdReaderIsCompactLayout.value && mdReaderHasLoadedDocument.value)
+const mdReaderFloatingConfigButtonText = computed(() => (mdReaderIsConfigOpen.value ? '继续阅读' : '配置'))
 
 let savePositionTimer: number | null = null
 let compactLayoutMediaQuery: MediaQueryList | null = null
@@ -134,6 +136,15 @@ function openReaderConfig(): void {
 
 function closeReaderConfig(): void {
   mdReaderIsConfigOpen.value = false
+}
+
+function toggleReaderConfig(): void {
+  if (mdReaderIsConfigOpen.value) {
+    closeReaderConfig()
+    return
+  }
+
+  openReaderConfig()
 }
 
 async function openMarkdownByDialog(): Promise<void> {
@@ -758,7 +769,14 @@ function clampNumber(value: number, min: number, max: number): number {
       </main>
     </div>
 
-    <button v-if="mdReaderCompactReadingMode" type="button" class="md-reader-floating-config-button" @click="openReaderConfig">配置</button>
+    <button
+      v-if="mdReaderShowFloatingConfigButton"
+      type="button"
+      class="md-reader-floating-config-button"
+      @click="toggleReaderConfig"
+    >
+      {{ mdReaderFloatingConfigButtonText }}
+    </button>
   </div>
 </template>
 
@@ -791,6 +809,10 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-app-root-compact-reading {
   padding: 10px;
   gap: 10px;
+}
+
+.md-reader-app-root-compact-reading .md-reader-header-section {
+  display: none;
 }
 
 .md-reader-header-section {
