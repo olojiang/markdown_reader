@@ -107,9 +107,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   ios:
-    name: Release iOS IPA (unsigned)
+    name: Release iOS IPA
     runs-on: macos-latest
     timeout-minutes: 45
+    env:
+      IOS_BUNDLE_ID_DEFAULT: com.markdown.reader.mobile
+      IOS_EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -126,7 +129,122 @@ jobs:
       - name: Sync iOS project
         run: npm run ios:sync
 
-      - name: Build unsigned iOS app
+      - name: Prepare iOS signing assets
+        env:
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_SIGNING_IDENTITY: ${{ secrets.IOS_SIGNING_IDENTITY }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_BUNDLE_ID_SECRET: ${{ secrets.IOS_BUNDLE_ID }}
+        run: |
+          REQUIRED_VARS=(
+            IOS_CERTIFICATE_P12_BASE64
+            IOS_CERTIFICATE_PASSWORD
+            IOS_PROVISIONING_PROFILE_BASE64
+            IOS_SIGNING_IDENTITY
+            IOS_TEAM_ID
+          )
+
+          for var_name in "${REQUIRED_VARS[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              echo "SIGNING_ENABLED=false" >> "$GITHUB_ENV"
+              echo "IOS_BUNDLE_ID=$IOS_BUNDLE_ID_DEFAULT" >> "$GITHUB_ENV"
+              echo "::notice::Missing iOS signing secret: $var_name. Falling back to unsigned IPA."
+              exit 0
+            fi
+          done
+
+          KEYCHAIN_NAME="ios-signing-${GITHUB_RUN_ID}.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+
+          echo "$IOS_CERTIFICATE_P12_BASE64" | base64 --decode > ios-signing-cert.p12
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > ios-signing.mobileprovision
+          security cms -D -i ios-signing.mobileprovision > ios-signing-profile.plist
+
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" ios-signing-profile.plist)
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" ios-signing-profile.plist)
+          cp ios-signing.mobileprovision "$PROFILE_DIR/$PROFILE_UUID.mobileprovision"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security import ios-signing-cert.p12 -k "$KEYCHAIN_NAME" -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | sed 's/\"//g')
+          security find-identity -v -p codesigning "$KEYCHAIN_NAME"
+
+          IOS_BUNDLE_ID="${IOS_BUNDLE_ID_SECRET:-$IOS_BUNDLE_ID_DEFAULT}"
+
+          echo "SIGNING_ENABLED=true" >> "$GITHUB_ENV"
+          echo "IOS_KEYCHAIN_NAME=$KEYCHAIN_NAME" >> "$GITHUB_ENV"
+          echo "IOS_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "IOS_BUNDLE_ID=$IOS_BUNDLE_ID" >> "$GITHUB_ENV"
+          echo "IOS_SIGNING_IDENTITY=$IOS_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "IOS_TEAM_ID=$IOS_TEAM_ID" >> "$GITHUB_ENV"
+
+      - name: Build signed iOS IPA for release
+        if: env.SIGNING_ENABLED == 'true'
+        run: |
+          VERSION_NAME="${{ github.event.release.tag_name }}"
+          VERSION_NAME="${VERSION_NAME#v}"
+          VERSION_CODE="${{ github.run_number }}"
+          ARCHIVE_PATH="ios/output/App.xcarchive"
+          EXPORT_PATH="ios/output/export"
+          EXPORT_OPTIONS_PLIST="ios/output/ExportOptions.plist"
+          EXPORT_METHOD="${IOS_EXPORT_METHOD:-ad-hoc}"
+
+          mkdir -p ios/output
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            MARKETING_VERSION="$VERSION_NAME" \
+            CURRENT_PROJECT_VERSION="$VERSION_CODE" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$IOS_SIGNING_IDENTITY" \
+            PROVISIONING_PROFILE="$IOS_PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $IOS_KEYCHAIN_NAME" \
+            archive
+
+          cat > "$EXPORT_OPTIONS_PLIST" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>${EXPORT_METHOD}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>${IOS_TEAM_ID}</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${IOS_BUNDLE_ID}</key>
+              <string>${IOS_PROFILE_NAME}</string>
+            </dict>
+            <key>compileBitcode</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" -exportPath "$EXPORT_PATH" -exportOptionsPlist "$EXPORT_OPTIONS_PLIST"
+          IPA_PATH=$(find "$EXPORT_PATH" -maxdepth 1 -name "*.ipa" -print -quit)
+          cp "$IPA_PATH" "ios/output/markdown-reader-${{ github.event.release.tag_name }}-ios-signed.ipa"
+
+      - name: Build unsigned iOS app for release
+        if: env.SIGNING_ENABLED != 'true'
         run: |
           VERSION_NAME="${{ github.event.release.tag_name }}"
           VERSION_NAME="${VERSION_NAME#v}"
@@ -146,6 +264,7 @@ jobs:
             build
 
       - name: Package unsigned IPA for release
+        if: env.SIGNING_ENABLED != 'true'
         run: |
           APP_PATH=$(find ios/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -print -quit)
           mkdir -p ios/output/Payload
@@ -153,7 +272,21 @@ jobs:
           cd ios/output
           zip -qry "markdown-reader-${{ github.event.release.tag_name }}-ios-unsigned.ipa" Payload
 
-      - name: Upload iOS IPA to release
+      - name: Upload signed iOS IPA to release
+        if: env.SIGNING_ENABLED == 'true'
+        run: gh release upload "${{ github.event.release.tag_name }}" "ios/output/markdown-reader-${{ github.event.release.tag_name }}-ios-signed.ipa" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload unsigned iOS IPA to release
+        if: env.SIGNING_ENABLED != 'true'
         run: gh release upload "${{ github.event.release.tag_name }}" "ios/output/markdown-reader-${{ github.event.release.tag_name }}-ios-unsigned.ipa" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup iOS signing assets
+        if: always() && env.SIGNING_ENABLED == 'true'
+        run: |
+          rm -f ios-signing-cert.p12 ios-signing.mobileprovision ios-signing-profile.plist
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$IOS_PROFILE_UUID.mobileprovision"
+          security delete-keychain "$IOS_KEYCHAIN_NAME" || true
