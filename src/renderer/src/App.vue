@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Capacitor } from '@capacitor/core'
+import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 
 import { parseMarkdownDocument } from '@shared/markdown-parser'
 import { DEFAULT_READER_PREFERENCE } from '@shared/reader-defaults'
@@ -27,6 +29,7 @@ const READER_LAST_BOOK_TEXT_STORAGE_KEY = 'md-reader-last-book-text-v1'
 const READER_CACHE_DB_NAME = 'md-reader-cache-db'
 const READER_CACHE_STORE_NAME = 'reader-cache-store'
 const READER_CACHE_LAST_BOOK_KEY = 'last-book-v1'
+const MOBILE_READER_STORE_PATH = 'MarkdownReader/reader-store-v1.json'
 
 const COMPACT_LAYOUT_MEDIA_QUERY = '(max-width: 900px)'
 
@@ -35,6 +38,13 @@ interface ReaderCachedBookSnapshot {
   sourceLabel: string
   markdownText: string
   savedAt: number
+}
+
+interface MobileReaderStoreData {
+  positions: Record<string, ReaderPosition>
+  preference: ReaderPreference | null
+  lastOpenedSession: ReaderLastOpenedSession | null
+  lastBookSnapshot: ReaderCachedBookSnapshot | null
 }
 
 type MdReaderCompactPanel = 'chapters' | 'settings' | null
@@ -59,6 +69,7 @@ const mdReaderHasPreviousChapter = computed(() => mdReaderActiveChapterIndex.val
 const mdReaderHasNextChapter = computed(() => mdReaderActiveChapterIndex.value < mdReaderChapterItems.value.length - 1)
 const mdReaderHasLoadedDocument = computed(() => mdReaderParsedDocument.value !== null)
 const mdReaderIsCompactLoadedMode = computed(() => mdReaderIsCompactLayout.value && mdReaderHasLoadedDocument.value)
+const mdReaderCurrentChapterTitle = computed(() => mdReaderCurrentChapter.value?.title?.trim() || '未选择章节')
 const mdReaderCompactReadingMode = computed(
   () => mdReaderIsCompactLoadedMode.value && mdReaderCompactPanel.value === null
 )
@@ -80,6 +91,7 @@ const mdReaderShowFloatingPanelButtons = computed(() => mdReaderIsCompactLoadedM
 
 let savePositionTimer: number | null = null
 let compactLayoutMediaQuery: MediaQueryList | null = null
+let mobileReaderStoreCache: MobileReaderStoreData | null = null
 
 onMounted(() => {
   setupCompactLayoutWatcher()
@@ -144,6 +156,10 @@ function toggleCompactPanel(panel: Exclude<MdReaderCompactPanel, null>): void {
   }
 
   mdReaderCompactPanel.value = mdReaderCompactPanel.value === panel ? null : panel
+}
+
+function canUseMobileFilesystemStore(): boolean {
+  return !mdReaderSupportsPathOpen.value && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
 }
 
 async function openMarkdownByDialog(): Promise<void> {
@@ -376,12 +392,24 @@ async function loadReaderPosition(sourceKey: string): Promise<ReaderPosition | n
     return window.electronAPI.loadReaderPosition(sourceKey)
   }
 
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    return mobileStore.positions[sourceKey] ?? null
+  }
+
   return loadWebStorePositions()[sourceKey] ?? null
 }
 
 async function saveReaderPosition(sourceKey: string, value: ReaderPosition): Promise<void> {
   if (mdReaderSupportsPathOpen.value) {
     await window.electronAPI.saveReaderPosition(sourceKey, value)
+    return
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mobileStore.positions[sourceKey] = value
+    await saveMobileReaderStore(mobileStore)
     return
   }
 
@@ -393,6 +421,11 @@ async function saveReaderPosition(sourceKey: string, value: ReaderPosition): Pro
 async function loadReaderPreference(): Promise<ReaderPreference | null> {
   if (mdReaderSupportsPathOpen.value) {
     return window.electronAPI.loadReaderPreference()
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    return mobileStore.preference
   }
 
   const raw = safeLocalStorageGet(READER_PREFERENCE_STORAGE_KEY)
@@ -413,12 +446,24 @@ async function saveReaderPreference(value: ReaderPreference): Promise<void> {
     return
   }
 
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mobileStore.preference = value
+    await saveMobileReaderStore(mobileStore)
+    return
+  }
+
   safeLocalStorageSet(READER_PREFERENCE_STORAGE_KEY, JSON.stringify(value))
 }
 
 async function loadLastOpenedSession(): Promise<ReaderLastOpenedSession | null> {
   if (mdReaderSupportsPathOpen.value) {
     return window.electronAPI.loadLastOpenedSession()
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    return mobileStore.lastOpenedSession
   }
 
   const raw = safeLocalStorageGet(READER_LAST_OPENED_STORAGE_KEY)
@@ -439,6 +484,13 @@ async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Pro
     return
   }
 
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mobileStore.lastOpenedSession = value
+    await saveMobileReaderStore(mobileStore)
+    return
+  }
+
   if (!value) {
     safeLocalStorageRemove(READER_LAST_OPENED_STORAGE_KEY)
     return
@@ -448,6 +500,11 @@ async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Pro
 }
 
 async function loadLastBookSnapshot(): Promise<ReaderCachedBookSnapshot | null> {
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    return mobileStore.lastBookSnapshot
+  }
+
   const indexedValue = await readReaderCacheValue(READER_CACHE_LAST_BOOK_KEY)
   const normalizedIndexed = normalizeCachedBookSnapshot(indexedValue)
 
@@ -468,6 +525,13 @@ async function loadLastBookSnapshot(): Promise<ReaderCachedBookSnapshot | null> 
 }
 
 async function saveLastBookSnapshot(value: ReaderCachedBookSnapshot): Promise<void> {
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mobileStore.lastBookSnapshot = value
+    await saveMobileReaderStore(mobileStore)
+    return
+  }
+
   await writeReaderCacheValue(READER_CACHE_LAST_BOOK_KEY, value)
   safeLocalStorageSet(READER_LAST_BOOK_TEXT_STORAGE_KEY, JSON.stringify(value))
 }
@@ -521,6 +585,133 @@ function normalizeCachedBookSnapshot(raw: unknown): ReaderCachedBookSnapshot | n
     sourceLabel: candidate.sourceLabel,
     markdownText: candidate.markdownText,
     savedAt: typeof candidate.savedAt === 'number' ? candidate.savedAt : Date.now()
+  }
+}
+
+async function loadMobileReaderStore(): Promise<MobileReaderStoreData | null> {
+  if (!canUseMobileFilesystemStore()) {
+    return null
+  }
+
+  if (mobileReaderStoreCache) {
+    return mobileReaderStoreCache
+  }
+
+  try {
+    const { data } = await Filesystem.readFile({
+      path: MOBILE_READER_STORE_PATH,
+      directory: Directory.Documents,
+      encoding: Encoding.UTF8
+    })
+
+    const text = typeof data === 'string' ? data : await data.text()
+    const normalized = normalizeMobileReaderStoreData(JSON.parse(text))
+    mobileReaderStoreCache = normalized
+    return normalized
+  } catch {
+    const migrated = buildLegacyWebStoreSnapshot()
+    mobileReaderStoreCache = migrated
+    await saveMobileReaderStore(migrated)
+    return migrated
+  }
+}
+
+async function saveMobileReaderStore(value: MobileReaderStoreData): Promise<void> {
+  if (!canUseMobileFilesystemStore()) {
+    return
+  }
+
+  mobileReaderStoreCache = value
+
+  try {
+    await Filesystem.writeFile({
+      path: MOBILE_READER_STORE_PATH,
+      directory: Directory.Documents,
+      data: JSON.stringify(value, null, 2),
+      encoding: Encoding.UTF8,
+      recursive: true
+    })
+  } catch {
+    // Ignore write failures and keep in-memory/app storage behavior usable.
+  }
+}
+
+function normalizeMobileReaderStoreData(raw: unknown): MobileReaderStoreData {
+  if (!raw || typeof raw !== 'object') {
+    return {
+      positions: {},
+      preference: null,
+      lastOpenedSession: null,
+      lastBookSnapshot: null
+    }
+  }
+
+  const candidate = raw as Partial<MobileReaderStoreData>
+  const normalizedPositions: Record<string, ReaderPosition> = {}
+
+  if (candidate.positions && typeof candidate.positions === 'object') {
+    for (const [key, value] of Object.entries(candidate.positions as Record<string, unknown>)) {
+      if (typeof key !== 'string' || !value || typeof value !== 'object') {
+        continue
+      }
+
+      const record = value as Partial<ReaderPosition>
+      const chapterIndex = typeof record.chapterIndex === 'number' ? Math.max(Math.floor(record.chapterIndex), 0) : 0
+      const scrollTop = typeof record.scrollTop === 'number' ? Math.max(record.scrollTop, 0) : 0
+
+      normalizedPositions[key] = {
+        chapterIndex,
+        scrollTop
+      }
+    }
+  }
+
+  return {
+    positions: normalizedPositions,
+    preference: normalizeReaderPreference(candidate.preference ?? {}),
+    lastOpenedSession: normalizeLastOpenedSession(candidate.lastOpenedSession),
+    lastBookSnapshot: normalizeCachedBookSnapshot(candidate.lastBookSnapshot)
+  }
+}
+
+function buildLegacyWebStoreSnapshot(): MobileReaderStoreData {
+  const positions = loadWebStorePositions()
+
+  let preference: ReaderPreference | null = null
+  const rawPreference = safeLocalStorageGet(READER_PREFERENCE_STORAGE_KEY)
+  if (rawPreference) {
+    try {
+      preference = normalizeReaderPreference(JSON.parse(rawPreference) as Partial<ReaderPreference>)
+    } catch {
+      preference = null
+    }
+  }
+
+  let lastOpenedSession: ReaderLastOpenedSession | null = null
+  const rawLastOpened = safeLocalStorageGet(READER_LAST_OPENED_STORAGE_KEY)
+  if (rawLastOpened) {
+    try {
+      lastOpenedSession = normalizeLastOpenedSession(JSON.parse(rawLastOpened))
+    } catch {
+      lastOpenedSession = null
+    }
+  }
+
+  let lastBookSnapshot: ReaderCachedBookSnapshot | null = null
+  const rawLastBook = safeLocalStorageGet(READER_LAST_BOOK_TEXT_STORAGE_KEY)
+  if (rawLastBook) {
+    try {
+      lastBookSnapshot = normalizeCachedBookSnapshot(JSON.parse(rawLastBook))
+    } catch {
+      lastBookSnapshot = null
+    }
+  }
+
+  return {
+    positions,
+    preference,
+    lastOpenedSession,
+    lastBookSnapshot
   }
 }
 
@@ -752,16 +943,65 @@ function clampNumber(value: number, min: number, max: number): number {
         <details v-if="mdReaderShowSettingsPanel" class="md-reader-sidebar-panel-details" open>
           <summary class="md-reader-sidebar-panel-summary">阅读样式</summary>
           <section class="md-reader-sidebar-panel-content-section" aria-label="阅读样式面板">
+            <section v-if="mdReaderIsCompactLoadedMode" class="md-reader-compact-file-shell-section" aria-label="移动端文件控制">
+              <p class="md-reader-compact-file-title">文件</p>
+              <form class="md-reader-open-form" @submit.prevent="openMarkdownByPath" aria-label="移动端打开 Markdown 文件">
+                <template v-if="mdReaderSupportsPathOpen">
+                  <label class="md-reader-open-form-label" for="md-reader-compact-path-input">Markdown 路径</label>
+                  <input
+                    id="md-reader-compact-path-input"
+                    v-model="mdReaderPathInputModel"
+                    class="md-reader-open-form-path-input"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="请输入 .md 文件路径"
+                  />
+                </template>
+                <div class="md-reader-open-form-button-group">
+                  <button v-if="mdReaderSupportsPathOpen" type="submit" class="md-reader-open-form-submit-button" :disabled="mdReaderIsLoading">
+                    按路径打开
+                  </button>
+                  <button type="button" class="md-reader-open-form-dialog-button" :disabled="mdReaderIsLoading" @click="openMarkdownByDialog">
+                    {{ mdReaderSupportsPathOpen ? '选择文件' : '选择 Markdown 文件' }}
+                  </button>
+                </div>
+              </form>
+            </section>
             <ReaderSettings :preference="mdReaderPreference" :themes="READER_THEME_OPTIONS" @change="handlePreferenceChange" />
           </section>
         </details>
       </aside>
 
       <main class="md-reader-workspace-main" aria-label="阅读区域">
+        <nav v-if="mdReaderShowFloatingPanelButtons" class="md-reader-compact-topbar-nav" aria-label="移动端面板切换">
+          <button
+            type="button"
+            class="md-reader-compact-topbar-button"
+            :aria-pressed="mdReaderCompactPanel === 'settings'"
+            aria-label="阅读设置"
+            title="阅读设置"
+            @click="toggleCompactPanel('settings')"
+          >
+            ⚙
+          </button>
+          <p class="md-reader-compact-topbar-title">{{ mdReaderCurrentChapterTitle }}</p>
+          <button
+            type="button"
+            class="md-reader-compact-topbar-button"
+            :aria-pressed="mdReaderCompactPanel === 'chapters'"
+            aria-label="章节目录"
+            title="章节目录"
+            @click="toggleCompactPanel('chapters')"
+          >
+            ☰
+          </button>
+        </nav>
+
         <section class="md-reader-workspace-article-section">
           <ReaderArticle
             :chapter="mdReaderCurrentChapter"
             :preference="mdReaderPreference"
+            :hide-title="mdReaderIsCompactLoadedMode"
             :initial-scroll-top="mdReaderRestoredScrollTop"
             @scroll-change="handleReaderScrollChange"
           />
@@ -780,29 +1020,6 @@ function clampNumber(value: number, min: number, max: number): number {
         </footer>
       </main>
     </div>
-
-    <button
-      v-if="mdReaderShowFloatingPanelButtons"
-      type="button"
-      class="md-reader-floating-tool-button md-reader-floating-tool-button-settings"
-      :aria-pressed="mdReaderCompactPanel === 'settings'"
-      aria-label="阅读设置"
-      title="阅读设置"
-      @click="toggleCompactPanel('settings')"
-    >
-      <span aria-hidden="true">⚙</span>
-    </button>
-    <button
-      v-if="mdReaderShowFloatingPanelButtons"
-      type="button"
-      class="md-reader-floating-tool-button md-reader-floating-tool-button-chapters"
-      :aria-pressed="mdReaderCompactPanel === 'chapters'"
-      aria-label="章节目录"
-      title="章节目录"
-      @click="toggleCompactPanel('chapters')"
-    >
-      <span aria-hidden="true">☰</span>
-    </button>
   </div>
 </template>
 
@@ -929,7 +1146,7 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button,
 .md-reader-open-form-dialog-button,
 .md-reader-workspace-navigation-button,
-.md-reader-floating-tool-button {
+.md-reader-compact-topbar-button {
   min-height: 40px;
   padding: 0 16px;
   border: 1px solid var(--md-stroke-strong);
@@ -945,7 +1162,7 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button:hover,
 .md-reader-open-form-dialog-button:hover,
 .md-reader-workspace-navigation-button:hover,
-.md-reader-floating-tool-button:hover {
+.md-reader-compact-topbar-button:hover {
   filter: brightness(1.01);
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(57, 45, 20, 0.18);
@@ -954,14 +1171,14 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button:active,
 .md-reader-open-form-dialog-button:active,
 .md-reader-workspace-navigation-button:active,
-.md-reader-floating-tool-button:active {
+.md-reader-compact-topbar-button:active {
   transform: translateY(0);
 }
 
 .md-reader-open-form-submit-button:focus-visible,
 .md-reader-open-form-dialog-button:focus-visible,
 .md-reader-workspace-navigation-button:focus-visible,
-.md-reader-floating-tool-button:focus-visible,
+.md-reader-compact-topbar-button:focus-visible,
 .md-reader-open-form-path-input:focus-visible {
   outline: none;
   box-shadow: var(--md-focus-ring);
@@ -1017,11 +1234,66 @@ function clampNumber(value: number, min: number, max: number): number {
   padding: 6px 12px 12px;
 }
 
+.md-reader-compact-file-shell-section {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--md-stroke);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.md-reader-compact-file-title {
+  margin-top: 0;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--md-text-subtle);
+}
+
 .md-reader-workspace-main {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 12px;
+}
+
+.md-reader-compact-topbar-nav {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--md-stroke);
+  border-radius: 12px;
+  background: var(--md-surface-2);
+  box-shadow: var(--md-shadow-soft);
+}
+
+.md-reader-compact-topbar-title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--md-text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.md-reader-compact-topbar-button {
+  width: 42px;
+  min-height: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.md-reader-compact-topbar-button[aria-pressed='true'] {
+  border-color: #6f5627;
+  background: linear-gradient(180deg, #f3e0b3 0%, #e8cc8f 100%);
 }
 
 .md-reader-workspace-article-section {
@@ -1051,35 +1323,6 @@ function clampNumber(value: number, min: number, max: number): number {
   padding: 8px 10px;
   border-radius: 999px;
   background: var(--md-accent-weak);
-}
-
-.md-reader-floating-tool-button {
-  position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 14px);
-  z-index: 20;
-  width: 44px;
-  min-height: 44px;
-  padding: 0;
-  font-size: 20px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(180deg, #fff7de 0%, #efdfb8 100%);
-  box-shadow: 0 8px 20px rgba(47, 39, 22, 0.28);
-}
-
-.md-reader-floating-tool-button-settings {
-  left: 16px;
-}
-
-.md-reader-floating-tool-button-chapters {
-  right: 16px;
-}
-
-.md-reader-floating-tool-button[aria-pressed='true'] {
-  border-color: #6f5627;
-  background: linear-gradient(180deg, #f3e0b3 0%, #e8cc8f 100%);
 }
 
 @media (max-width: 900px) {
@@ -1134,13 +1377,28 @@ function clampNumber(value: number, min: number, max: number): number {
     z-index: 9;
     backdrop-filter: blur(4px);
   }
+
+  .md-reader-compact-topbar-nav {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .md-reader-compact-topbar-title {
+    font-size: 12px;
+  }
+
+  .md-reader-compact-topbar-button {
+    width: 40px;
+    min-height: 40px;
+    font-size: 19px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .md-reader-open-form-submit-button,
   .md-reader-open-form-dialog-button,
   .md-reader-workspace-navigation-button,
-  .md-reader-floating-tool-button {
+  .md-reader-compact-topbar-button {
     transition: none;
   }
 }

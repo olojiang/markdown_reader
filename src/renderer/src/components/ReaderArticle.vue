@@ -9,9 +9,11 @@ const props = withDefaults(
     chapter: ChapterItem | null
     preference: ReaderPreference
     initialScrollTop?: number
+    hideTitle?: boolean
   }>(),
   {
-    initialScrollTop: 0
+    initialScrollTop: 0,
+    hideTitle: false
   }
 )
 
@@ -80,7 +82,7 @@ onMounted(() => {
 
 <template>
   <section class="md-reader-article-shell-section" aria-label="章节内容">
-    <header class="md-reader-article-title-header" data-testid="md-reader-article-title">
+    <header v-if="!props.hideTitle" class="md-reader-article-title-header" data-testid="md-reader-article-title">
       {{ mdReaderChapterTitle }}
     </header>
     <article
