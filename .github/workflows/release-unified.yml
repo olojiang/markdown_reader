@@ -132,7 +132,7 @@ jobs:
           VERSION_NAME="${VERSION_NAME#v}"
           VERSION_CODE="${{ github.run_number }}"
           xcodebuild \
-            -workspace ios/App/App.xcworkspace \
+            -project ios/App/App.xcodeproj \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \

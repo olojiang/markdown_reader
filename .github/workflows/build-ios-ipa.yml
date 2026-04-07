@@ -32,7 +32,7 @@ jobs:
           VERSION_NAME=$(node -e "console.log(require('./package.json').version)")
           VERSION_CODE="${{ github.run_number }}"
           xcodebuild \
-            -workspace ios/App/App.xcworkspace \
+            -project ios/App/App.xcodeproj \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
