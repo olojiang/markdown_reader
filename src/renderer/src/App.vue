@@ -37,6 +37,8 @@ interface ReaderCachedBookSnapshot {
   savedAt: number
 }
 
+type MdReaderCompactPanel = 'chapters' | 'settings' | null
+
 const mdReaderPathInputModel = ref(sampleFilePath)
 const mdReaderCurrentSourceKey = ref('')
 const mdReaderParsedDocument = ref<ParsedDocument | null>(null)
@@ -47,7 +49,7 @@ const mdReaderPreference = ref<ReaderPreference>({ ...DEFAULT_READER_PREFERENCE 
 const mdReaderStatusText = ref('请选择 Markdown 文件，或在桌面端输入路径打开。')
 const mdReaderIsLoading = ref(false)
 const mdReaderIsCompactLayout = ref(false)
-const mdReaderIsConfigOpen = ref(false)
+const mdReaderCompactPanel = ref<MdReaderCompactPanel>(null)
 const mdReaderWebFileInputRef = ref<HTMLInputElement | null>(null)
 const mdReaderSupportsPathOpen = computed(() => Boolean(window.electronAPI))
 
@@ -56,12 +58,15 @@ const mdReaderCurrentChapter = computed(() => mdReaderChapterItems.value[mdReade
 const mdReaderHasPreviousChapter = computed(() => mdReaderActiveChapterIndex.value > 0)
 const mdReaderHasNextChapter = computed(() => mdReaderActiveChapterIndex.value < mdReaderChapterItems.value.length - 1)
 const mdReaderHasLoadedDocument = computed(() => mdReaderParsedDocument.value !== null)
+const mdReaderIsCompactLoadedMode = computed(() => mdReaderIsCompactLayout.value && mdReaderHasLoadedDocument.value)
 const mdReaderCompactReadingMode = computed(
-  () => mdReaderIsCompactLayout.value && mdReaderHasLoadedDocument.value && !mdReaderIsConfigOpen.value
+  () => mdReaderIsCompactLoadedMode.value && mdReaderCompactPanel.value === null
 )
 const mdReaderShowsConfigPanel = computed(
-  () => !mdReaderIsCompactLayout.value || mdReaderIsConfigOpen.value || !mdReaderHasLoadedDocument.value
+  () => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value !== null
 )
+const mdReaderShowChapterPanel = computed(() => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value === 'chapters')
+const mdReaderShowSettingsPanel = computed(() => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value === 'settings')
 const mdReaderChapterProgressText = computed(() => {
   if (mdReaderChapterItems.value.length === 0) {
     return '未加载章节'
@@ -71,8 +76,7 @@ const mdReaderChapterProgressText = computed(() => {
 })
 const mdReaderPrevButtonText = computed(() => (mdReaderIsCompactLayout.value ? '上一章' : '上一章（Ctrl+←）'))
 const mdReaderNextButtonText = computed(() => (mdReaderIsCompactLayout.value ? '下一章' : '下一章（Ctrl+→）'))
-const mdReaderShowFloatingConfigButton = computed(() => mdReaderIsCompactLayout.value && mdReaderHasLoadedDocument.value)
-const mdReaderFloatingConfigButtonText = computed(() => (mdReaderIsConfigOpen.value ? '继续阅读' : '配置'))
+const mdReaderShowFloatingPanelButtons = computed(() => mdReaderIsCompactLoadedMode.value)
 
 let savePositionTimer: number | null = null
 let compactLayoutMediaQuery: MediaQueryList | null = null
@@ -126,25 +130,20 @@ function handleCompactLayoutChange(event: MediaQueryListEvent): void {
   mdReaderIsCompactLayout.value = event.matches
 
   if (!event.matches) {
-    mdReaderIsConfigOpen.value = false
+    mdReaderCompactPanel.value = null
   }
 }
 
-function openReaderConfig(): void {
-  mdReaderIsConfigOpen.value = true
+function closeCompactPanel(): void {
+  mdReaderCompactPanel.value = null
 }
 
-function closeReaderConfig(): void {
-  mdReaderIsConfigOpen.value = false
-}
-
-function toggleReaderConfig(): void {
-  if (mdReaderIsConfigOpen.value) {
-    closeReaderConfig()
+function toggleCompactPanel(panel: Exclude<MdReaderCompactPanel, null>): void {
+  if (!mdReaderIsCompactLoadedMode.value) {
     return
   }
 
-  openReaderConfig()
+  mdReaderCompactPanel.value = mdReaderCompactPanel.value === panel ? null : panel
 }
 
 async function openMarkdownByDialog(): Promise<void> {
@@ -244,7 +243,7 @@ async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markd
     mdReaderStatusText.value = `已加载：${sourceLabel}（${chapterLength} 章）`
 
     if (mdReaderIsCompactLayout.value && chapterLength > 0) {
-      closeReaderConfig()
+      closeCompactPanel()
     }
   } finally {
     mdReaderIsLoading.value = false
@@ -316,7 +315,7 @@ async function handleChapterSwitch(index: number): Promise<void> {
   await persistReaderPosition(0)
 
   if (mdReaderIsCompactLayout.value) {
-    closeReaderConfig()
+    closeCompactPanel()
   }
 }
 
@@ -690,7 +689,13 @@ function clampNumber(value: number, min: number, max: number): number {
 </script>
 
 <template>
-  <div class="md-reader-app-root" :class="{ 'md-reader-app-root-compact-reading': mdReaderCompactReadingMode }">
+  <div
+    class="md-reader-app-root"
+    :class="{
+      'md-reader-app-root-compact': mdReaderIsCompactLoadedMode,
+      'md-reader-app-root-compact-reading': mdReaderCompactReadingMode
+    }"
+  >
     <header class="md-reader-header-section">
       <h1 class="md-reader-header-title">纪 Reader</h1>
       <p v-if="mdReaderShowsConfigPanel || !mdReaderHasLoadedDocument" class="md-reader-header-description">
@@ -737,14 +742,14 @@ function clampNumber(value: number, min: number, max: number): number {
 
     <div class="md-reader-workspace-shell" :class="{ 'md-reader-workspace-shell-reading-only': mdReaderCompactReadingMode }">
       <aside v-if="mdReaderShowsConfigPanel" class="md-reader-workspace-sidebar">
-        <details class="md-reader-sidebar-panel-details" open>
+        <details v-if="mdReaderShowChapterPanel" class="md-reader-sidebar-panel-details" open>
           <summary class="md-reader-sidebar-panel-summary">目录</summary>
           <section class="md-reader-sidebar-panel-content-section" aria-label="目录面板">
             <ChapterList :chapters="mdReaderChapterItems" :active-index="mdReaderActiveChapterIndex" @select="handleChapterSwitch" />
           </section>
         </details>
 
-        <details class="md-reader-sidebar-panel-details" open>
+        <details v-if="mdReaderShowSettingsPanel" class="md-reader-sidebar-panel-details" open>
           <summary class="md-reader-sidebar-panel-summary">阅读样式</summary>
           <section class="md-reader-sidebar-panel-content-section" aria-label="阅读样式面板">
             <ReaderSettings :preference="mdReaderPreference" :themes="READER_THEME_OPTIONS" @change="handlePreferenceChange" />
@@ -777,12 +782,26 @@ function clampNumber(value: number, min: number, max: number): number {
     </div>
 
     <button
-      v-if="mdReaderShowFloatingConfigButton"
+      v-if="mdReaderShowFloatingPanelButtons"
       type="button"
-      class="md-reader-floating-config-button"
-      @click="toggleReaderConfig"
+      class="md-reader-floating-tool-button md-reader-floating-tool-button-settings"
+      :aria-pressed="mdReaderCompactPanel === 'settings'"
+      aria-label="阅读设置"
+      title="阅读设置"
+      @click="toggleCompactPanel('settings')"
     >
-      {{ mdReaderFloatingConfigButtonText }}
+      <span aria-hidden="true">⚙</span>
+    </button>
+    <button
+      v-if="mdReaderShowFloatingPanelButtons"
+      type="button"
+      class="md-reader-floating-tool-button md-reader-floating-tool-button-chapters"
+      :aria-pressed="mdReaderCompactPanel === 'chapters'"
+      aria-label="章节目录"
+      title="章节目录"
+      @click="toggleCompactPanel('chapters')"
+    >
+      <span aria-hidden="true">☰</span>
     </button>
   </div>
 </template>
@@ -825,13 +844,17 @@ function clampNumber(value: number, min: number, max: number): number {
   font-family: 'Source Han Serif SC', 'PingFang SC', serif;
 }
 
-.md-reader-app-root-compact-reading {
+.md-reader-app-root-compact {
   padding: 10px;
   gap: 10px;
 }
 
-.md-reader-app-root-compact-reading .md-reader-header-section {
+.md-reader-app-root-compact .md-reader-header-section {
   display: none;
+}
+
+.md-reader-app-root-compact-reading .md-reader-workspace-shell-reading-only {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .md-reader-header-section {
@@ -906,7 +929,7 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button,
 .md-reader-open-form-dialog-button,
 .md-reader-workspace-navigation-button,
-.md-reader-floating-config-button {
+.md-reader-floating-tool-button {
   min-height: 40px;
   padding: 0 16px;
   border: 1px solid var(--md-stroke-strong);
@@ -922,7 +945,7 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button:hover,
 .md-reader-open-form-dialog-button:hover,
 .md-reader-workspace-navigation-button:hover,
-.md-reader-floating-config-button:hover {
+.md-reader-floating-tool-button:hover {
   filter: brightness(1.01);
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(57, 45, 20, 0.18);
@@ -931,14 +954,14 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button:active,
 .md-reader-open-form-dialog-button:active,
 .md-reader-workspace-navigation-button:active,
-.md-reader-floating-config-button:active {
+.md-reader-floating-tool-button:active {
   transform: translateY(0);
 }
 
 .md-reader-open-form-submit-button:focus-visible,
 .md-reader-open-form-dialog-button:focus-visible,
 .md-reader-workspace-navigation-button:focus-visible,
-.md-reader-floating-config-button:focus-visible,
+.md-reader-floating-tool-button:focus-visible,
 .md-reader-open-form-path-input:focus-visible {
   outline: none;
   box-shadow: var(--md-focus-ring);
@@ -1030,13 +1053,33 @@ function clampNumber(value: number, min: number, max: number): number {
   background: var(--md-accent-weak);
 }
 
-.md-reader-floating-config-button {
+.md-reader-floating-tool-button {
   position: fixed;
-  right: 16px;
   top: calc(env(safe-area-inset-top, 0px) + 14px);
   z-index: 20;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(180deg, #fff7de 0%, #efdfb8 100%);
   box-shadow: 0 8px 20px rgba(47, 39, 22, 0.28);
+}
+
+.md-reader-floating-tool-button-settings {
+  left: 16px;
+}
+
+.md-reader-floating-tool-button-chapters {
+  right: 16px;
+}
+
+.md-reader-floating-tool-button[aria-pressed='true'] {
+  border-color: #6f5627;
+  background: linear-gradient(180deg, #f3e0b3 0%, #e8cc8f 100%);
 }
 
 @media (max-width: 900px) {
@@ -1060,7 +1103,7 @@ function clampNumber(value: number, min: number, max: number): number {
   }
 
   .md-reader-workspace-sidebar {
-    max-height: 44vh;
+    max-height: 56vh;
     padding-right: 0;
   }
 
@@ -1097,7 +1140,7 @@ function clampNumber(value: number, min: number, max: number): number {
   .md-reader-open-form-submit-button,
   .md-reader-open-form-dialog-button,
   .md-reader-workspace-navigation-button,
-  .md-reader-floating-config-button {
+  .md-reader-floating-tool-button {
     transition: none;
   }
 }
