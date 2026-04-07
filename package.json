@@ -1,0 +1,43 @@
+{
+  "name": "markdown-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --x64 --publish never",
+    "dist:linux": "npm run build && electron-builder --linux AppImage --x64 --publish never",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:build:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "preview": "electron-vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
+    "dompurify": "^3.2.6",
+    "markdown-it": "^14.1.0",
+    "vue": "^3.5.17"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.3.0",
+    "@types/node": "^24.3.0",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "@vue/test-utils": "^2.4.6",
+    "electron": "^34.5.8",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^2.3.0",
+    "jsdom": "^26.1.0",
+    "less": "^4.3.0",
+    "typescript": "^5.9.2",
+    "vite": "^5.4.19",
+    "vitest": "^2.1.9",
+    "vue-tsc": "^2.2.4"
+  }
+}
