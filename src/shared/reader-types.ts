@@ -28,6 +28,7 @@ export interface ReaderPreference {
   themeKey: ReaderThemeKey
   fontSize: number
   lineHeight: number
+  contentPadding: number
   fontColor: string
   backgroundColor: string
 }

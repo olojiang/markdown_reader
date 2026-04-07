@@ -74,6 +74,20 @@ function updateTheme(themeKey: string): void {
         @input="updatePreference({ lineHeight: Number(($event.target as HTMLInputElement).value) })"
       />
 
+      <label class="md-reader-settings-label" for="md-reader-content-padding-input">
+        边距：{{ preference.contentPadding }}px
+      </label>
+      <input
+        id="md-reader-content-padding-input"
+        class="md-reader-settings-range-input"
+        type="range"
+        min="8"
+        max="40"
+        step="1"
+        :value="preference.contentPadding"
+        @input="updatePreference({ contentPadding: Number(($event.target as HTMLInputElement).value) })"
+      />
+
       <label class="md-reader-settings-label" for="md-reader-font-color-input">字体颜色</label>
       <input
         id="md-reader-font-color-input"

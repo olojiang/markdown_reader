@@ -88,13 +88,20 @@ function normalizeStoredPreference(rawPreference?: Partial<ReaderPreference>): R
 
   const rawThemeKey = rawPreference.themeKey
   const validThemeKey = isReaderThemeKey(rawThemeKey) ? rawThemeKey : null
+  const contentPadding = normalizeContentPadding(rawPreference.contentPadding)
 
   // Migration: old records without themeKey should not be shown as eyeCare by default.
   if (!validThemeKey) {
+    const dayTheme = getReaderThemeOption('day')
+
     return {
       ...DEFAULT_READER_PREFERENCE,
       themeKey: 'day',
-      ...(rawPreference as Omit<ReaderPreference, 'themeKey'>)
+      fontColor: rawPreference.fontColor ?? dayTheme.fontColor,
+      backgroundColor: rawPreference.backgroundColor ?? dayTheme.backgroundColor,
+      fontSize: rawPreference.fontSize ?? DEFAULT_READER_PREFERENCE.fontSize,
+      lineHeight: rawPreference.lineHeight ?? DEFAULT_READER_PREFERENCE.lineHeight,
+      contentPadding
     }
   }
 
@@ -112,8 +119,17 @@ function normalizeStoredPreference(rawPreference?: Partial<ReaderPreference>): R
     fontColor: shouldRepairEarlyEyeCare ? theme.fontColor : rawPreference.fontColor ?? theme.fontColor,
     backgroundColor: shouldRepairEarlyEyeCare ? theme.backgroundColor : rawPreference.backgroundColor ?? theme.backgroundColor,
     fontSize: rawPreference.fontSize ?? DEFAULT_READER_PREFERENCE.fontSize,
-    lineHeight: rawPreference.lineHeight ?? DEFAULT_READER_PREFERENCE.lineHeight
+    lineHeight: rawPreference.lineHeight ?? DEFAULT_READER_PREFERENCE.lineHeight,
+    contentPadding
   }
+}
+
+function normalizeContentPadding(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_READER_PREFERENCE.contentPadding
+  }
+
+  return Math.min(Math.max(Math.round(value), 8), 40)
 }
 
 function isReaderThemeKey(value: unknown): value is ReaderThemeKey {

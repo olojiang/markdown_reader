@@ -670,6 +670,13 @@ function normalizeReaderPreference(preference: Partial<ReaderPreference>): Reade
     mergedPreference.themeKey = DEFAULT_READER_PREFERENCE.themeKey
   }
 
+  const contentPadding = Number(mergedPreference.contentPadding)
+  if (!Number.isFinite(contentPadding)) {
+    mergedPreference.contentPadding = DEFAULT_READER_PREFERENCE.contentPadding
+  } else {
+    mergedPreference.contentPadding = clampNumber(Math.round(contentPadding), 8, 40)
+  }
+
   return mergedPreference
 }
 

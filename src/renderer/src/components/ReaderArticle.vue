@@ -35,9 +35,19 @@ const mdReaderArticleHtml = computed(() => {
   return mdParser.render(props.chapter.markdown)
 })
 
+const mdReaderChapterTitle = computed(() => {
+  const title = props.chapter?.title?.trim()
+  if (!title) {
+    return '未选择章节'
+  }
+
+  return title
+})
+
 const mdReaderArticleStyle = computed(() => ({
   '--md-reader-font-size': `${props.preference.fontSize}px`,
   '--md-reader-line-height': String(props.preference.lineHeight),
+  '--md-reader-content-padding': `${props.preference.contentPadding}px`,
   '--md-reader-font-color': props.preference.fontColor,
   '--md-reader-background-color': props.preference.backgroundColor
 }))
@@ -70,6 +80,9 @@ onMounted(() => {
 
 <template>
   <section class="md-reader-article-shell-section" aria-label="章节内容">
+    <header class="md-reader-article-title-header" data-testid="md-reader-article-title">
+      {{ mdReaderChapterTitle }}
+    </header>
     <article
       ref="mdReaderArticleBodyRef"
       class="md-reader-article-body-article"
@@ -85,13 +98,27 @@ onMounted(() => {
 .md-reader-article-shell-section {
   height: 100%;
   min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.md-reader-article-title-header {
+  padding: 10px 14px;
+  border: 1px solid #d5cfbf;
+  border-radius: 10px;
+  background: #fffaf0;
+  color: #3a3222;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .md-reader-article-body-article {
   box-sizing: border-box;
   height: 100%;
   overflow-y: auto;
-  padding: 24px;
+  padding: var(--md-reader-content-padding);
   font-size: var(--md-reader-font-size);
   line-height: var(--md-reader-line-height);
   color: var(--md-reader-font-color);

@@ -7,6 +7,7 @@ export const DEFAULT_READER_PREFERENCE: ReaderPreference = {
   themeKey: defaultReaderTheme.key,
   fontSize: 18,
   lineHeight: 2.7,
+  contentPadding: 18,
   fontColor: defaultReaderTheme.fontColor,
   backgroundColor: defaultReaderTheme.backgroundColor
 }

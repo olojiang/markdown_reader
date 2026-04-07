@@ -42,6 +42,7 @@ describe('createReaderStore', () => {
       themeKey: 'night' as const,
       fontSize: 20,
       lineHeight: 2,
+      contentPadding: 12,
       fontColor: '#222222',
       backgroundColor: '#efe8d8'
     }
@@ -76,6 +77,7 @@ describe('createReaderStore', () => {
     expect(preference.themeKey).toBe('day')
     expect(preference.fontColor).toBe('#1f1f1f')
     expect(preference.backgroundColor).toBe('#f8f3e8')
+    expect(preference.contentPadding).toBe(DEFAULT_READER_PREFERENCE.contentPadding)
   })
 
   it('repairs historical eyeCare mismatch color pair on load', async () => {
@@ -103,6 +105,7 @@ describe('createReaderStore', () => {
     expect(preference.themeKey).toBe('eyeCare')
     expect(preference.fontColor).toBe('#2f3a25')
     expect(preference.backgroundColor).toBe('#dce8c8')
+    expect(preference.contentPadding).toBe(DEFAULT_READER_PREFERENCE.contentPadding)
   })
 
   it('persists and reloads last opened session', async () => {
