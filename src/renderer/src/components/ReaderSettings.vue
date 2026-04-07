@@ -117,14 +117,15 @@ function updateTheme(themeKey: string): void {
 .md-reader-settings-fieldset {
   margin: 0;
   padding: 14px;
-  border: 1px solid #dadada;
-  border-radius: 10px;
-  background: #ffffff;
+  border: 1px solid #d7c8a9;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fffcf5 0%, #fdf6e7 100%);
 }
 
 .md-reader-settings-legend {
   padding: 0 6px;
   font-weight: 600;
+  color: #3b301f;
 }
 
 .md-reader-settings-label {
@@ -132,6 +133,7 @@ function updateTheme(themeKey: string): void {
   margin-top: 10px;
   margin-bottom: 6px;
   font-size: 13px;
+  color: #4f452f;
 }
 
 .md-reader-settings-range-input,
@@ -142,17 +144,30 @@ function updateTheme(themeKey: string): void {
 }
 
 .md-reader-settings-select-input {
-  min-height: 34px;
-  border: 1px solid #d0d0d0;
-  border-radius: 8px;
+  min-height: 38px;
+  border: 1px solid #d8c9ad;
+  border-radius: 10px;
   padding: 0 8px;
   background: #ffffff;
+  color: #2d261a;
 }
 
 .md-reader-settings-color-input {
-  min-height: 36px;
-  border: 1px solid #d0d0d0;
-  border-radius: 8px;
+  min-height: 40px;
+  border: 1px solid #d8c9ad;
+  border-radius: 10px;
   padding: 4px;
+}
+
+.md-reader-settings-range-input {
+  accent-color: #775b28;
+  min-height: 30px;
+}
+
+.md-reader-settings-select-input:focus-visible,
+.md-reader-settings-color-input:focus-visible,
+.md-reader-settings-range-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(107, 82, 32, 0.2);
 }
 </style>

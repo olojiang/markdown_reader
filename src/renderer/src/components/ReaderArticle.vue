@@ -100,18 +100,19 @@ onMounted(() => {
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
+  gap: 10px;
 }
 
 .md-reader-article-title-header {
-  padding: 10px 14px;
-  border: 1px solid #d5cfbf;
-  border-radius: 10px;
-  background: #fffaf0;
-  color: #3a3222;
+  padding: 11px 14px;
+  border: 1px solid #d7c8a9;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fff9e9 0%, #f5e6c1 100%);
+  color: #3a2e1a;
   font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
+  box-shadow: 0 6px 18px rgba(53, 41, 19, 0.12);
 }
 
 .md-reader-article-body-article {
@@ -123,8 +124,9 @@ onMounted(() => {
   line-height: var(--md-reader-line-height);
   color: var(--md-reader-font-color);
   background-color: var(--md-reader-background-color);
-  border-radius: 10px;
-  border: 1px solid #d5cfbf;
+  border-radius: 12px;
+  border: 1px solid #d7c8a9;
+  box-shadow: 0 8px 22px rgba(53, 41, 19, 0.1);
 }
 
 .md-reader-article-body-article :deep(h1),
@@ -138,5 +140,13 @@ onMounted(() => {
 .md-reader-article-body-article :deep(p) {
   margin-top: 0.75em;
   margin-bottom: 0.75em;
+}
+
+@media (max-width: 900px) {
+  .md-reader-article-title-header {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    font-size: 13px;
+  }
 }
 </style>

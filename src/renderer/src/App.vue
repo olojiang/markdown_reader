@@ -797,6 +797,17 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 .md-reader-app-root {
+  --md-surface-0: #f4efe2;
+  --md-surface-1: rgba(255, 255, 255, 0.78);
+  --md-surface-2: #fff9ee;
+  --md-stroke: #d2c5a6;
+  --md-stroke-strong: #8c7a57;
+  --md-text-main: #1f1b14;
+  --md-text-subtle: #544a35;
+  --md-accent: #6b5220;
+  --md-accent-weak: #ece1c6;
+  --md-shadow-soft: 0 10px 32px rgba(62, 49, 20, 0.12);
+  --md-focus-ring: 0 0 0 3px rgba(107, 82, 32, 0.26);
   box-sizing: border-box;
   height: 100%;
   min-height: 0;
@@ -807,9 +818,10 @@ function clampNumber(value: number, min: number, max: number): number {
   gap: 14px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 15% 10%, #f4ead5 0%, transparent 42%),
-    linear-gradient(180deg, #f2ede2 0%, #ebe6db 100%);
-  color: #1f1f1f;
+    radial-gradient(circle at 8% 8%, #f6e5bd 0%, transparent 36%),
+    radial-gradient(circle at 88% 16%, #ece0c4 0%, transparent 40%),
+    linear-gradient(180deg, #f3efe4 0%, #ece5d7 100%);
+  color: var(--md-text-main);
   font-family: 'Source Han Serif SC', 'PingFang SC', serif;
 }
 
@@ -823,32 +835,37 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 .md-reader-header-section {
-  padding: 14px;
-  border-radius: 12px;
-  border: 1px solid #d8cfbb;
-  background: rgba(255, 255, 255, 0.72);
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--md-stroke);
+  background: var(--md-surface-1);
+  box-shadow: var(--md-shadow-soft);
+  backdrop-filter: blur(3px);
 }
 
 .md-reader-header-title {
   margin-top: 0;
   margin-bottom: 8px;
+  color: var(--md-text-main);
+  letter-spacing: 0.02em;
 }
 
 .md-reader-header-description {
   margin-top: 0;
   margin-bottom: 14px;
+  color: var(--md-text-subtle);
 }
 
 .md-reader-header-panel-details {
-  border: 1px solid #d8cfbb;
-  border-radius: 10px;
-  background: #fffdf8;
+  border: 1px solid var(--md-stroke);
+  border-radius: 12px;
+  background: var(--md-surface-2);
 }
 
 .md-reader-header-panel-summary {
   cursor: pointer;
   font-weight: 700;
-  padding: 10px 12px;
+  padding: 12px;
   user-select: none;
 }
 
@@ -867,11 +884,13 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-path-input {
   width: 100%;
-  min-height: 38px;
+  min-height: 40px;
   box-sizing: border-box;
   padding: 0 10px;
-  border: 1px solid #ccbea0;
-  border-radius: 8px;
+  border: 1px solid var(--md-stroke);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--md-text-main);
 }
 
 .md-reader-open-form-button-group {
@@ -888,13 +907,41 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-dialog-button,
 .md-reader-workspace-navigation-button,
 .md-reader-floating-config-button {
-  min-height: 36px;
-  padding: 0 14px;
-  border: 1px solid #7f755a;
-  border-radius: 8px;
-  background: #fffdf8;
-  color: #1a1a1a;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--md-stroke-strong);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fffdf7 0%, #f6edd9 100%);
+  color: var(--md-text-main);
+  font-weight: 600;
   cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+  box-shadow: 0 3px 10px rgba(57, 45, 20, 0.12);
+}
+
+.md-reader-open-form-submit-button:hover,
+.md-reader-open-form-dialog-button:hover,
+.md-reader-workspace-navigation-button:hover,
+.md-reader-floating-config-button:hover {
+  filter: brightness(1.01);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(57, 45, 20, 0.18);
+}
+
+.md-reader-open-form-submit-button:active,
+.md-reader-open-form-dialog-button:active,
+.md-reader-workspace-navigation-button:active,
+.md-reader-floating-config-button:active {
+  transform: translateY(0);
+}
+
+.md-reader-open-form-submit-button:focus-visible,
+.md-reader-open-form-dialog-button:focus-visible,
+.md-reader-workspace-navigation-button:focus-visible,
+.md-reader-floating-config-button:focus-visible,
+.md-reader-open-form-path-input:focus-visible {
+  outline: none;
+  box-shadow: var(--md-focus-ring);
 }
 
 .md-reader-open-form-submit-button:disabled,
@@ -908,6 +955,7 @@ function clampNumber(value: number, min: number, max: number): number {
   margin-top: 10px;
   margin-bottom: 0;
   font-size: 13px;
+  color: var(--md-text-subtle);
 }
 
 .md-reader-workspace-shell {
@@ -929,16 +977,17 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 .md-reader-sidebar-panel-details {
-  border: 1px solid #d5cfbf;
-  border-radius: 10px;
-  background: #fffaf0;
+  border: 1px solid var(--md-stroke);
+  border-radius: 12px;
+  background: var(--md-surface-2);
+  box-shadow: var(--md-shadow-soft);
 }
 
 .md-reader-sidebar-panel-summary {
   cursor: pointer;
   user-select: none;
   font-weight: 700;
-  padding: 10px 12px;
+  padding: 11px 12px;
 }
 
 .md-reader-sidebar-panel-content-section {
@@ -957,10 +1006,11 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 .md-reader-workspace-navigation-footer {
-  border: 1px solid #d5cfbf;
-  border-radius: 10px;
-  background: #fffaf0;
+  border: 1px solid var(--md-stroke);
+  border-radius: 12px;
+  background: var(--md-surface-2);
   padding: 10px;
+  box-shadow: var(--md-shadow-soft);
 }
 
 .md-reader-workspace-navigation-nav {
@@ -972,8 +1022,12 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-workspace-navigation-progress {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--md-accent);
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: var(--md-accent-weak);
 }
 
 .md-reader-floating-config-button {
@@ -981,8 +1035,8 @@ function clampNumber(value: number, min: number, max: number): number {
   right: 16px;
   top: calc(env(safe-area-inset-top, 0px) + 14px);
   z-index: 20;
-  background: #f8f2e1;
-  box-shadow: 0 4px 14px rgba(47, 39, 22, 0.2);
+  background: linear-gradient(180deg, #fff7de 0%, #efdfb8 100%);
+  box-shadow: 0 8px 20px rgba(47, 39, 22, 0.28);
 }
 
 @media (max-width: 900px) {
@@ -1023,10 +1077,28 @@ function clampNumber(value: number, min: number, max: number): number {
 
   .md-reader-workspace-navigation-button {
     width: 100%;
+    min-height: 44px;
   }
 
   .md-reader-workspace-navigation-progress {
     text-align: center;
+    white-space: nowrap;
+  }
+
+  .md-reader-workspace-navigation-footer {
+    position: sticky;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
+    z-index: 9;
+    backdrop-filter: blur(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-reader-open-form-submit-button,
+  .md-reader-open-form-dialog-button,
+  .md-reader-workspace-navigation-button,
+  .md-reader-floating-config-button {
+    transition: none;
   }
 }
 </style>
