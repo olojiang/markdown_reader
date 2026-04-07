@@ -972,7 +972,7 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-floating-config-button {
   position: fixed;
   right: 16px;
-  bottom: 18px;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
   z-index: 20;
   background: #f8f2e1;
   box-shadow: 0 4px 14px rgba(47, 39, 22, 0.2);

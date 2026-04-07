@@ -41,12 +41,20 @@ jobs:
       - name: Sync Android project
         run: npm run android:sync
 
-      - name: Build debug APK
-        run: cd android && ./gradlew assembleDebug
+      - name: Build signed release APK
+        run: |
+          VERSION_NAME=$(node -e "console.log(require('./package.json').version)")
+          VERSION_CODE="${{ github.run_number }}"
+          cd android && ./gradlew assembleRelease \
+            -PAPP_VERSION_NAME="$VERSION_NAME" \
+            -PAPP_VERSION_CODE="$VERSION_CODE"
+
+      - name: Rename APK artifact
+        run: cp android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/markdown-reader-${{ github.run_number }}-android-release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
-          name: markdown-reader-android-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: markdown-reader-android-release-apk
+          path: android/app/build/outputs/apk/release/markdown-reader-${{ github.run_number }}-android-release.apk
           if-no-files-found: error

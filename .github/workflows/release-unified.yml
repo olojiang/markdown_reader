@@ -89,13 +89,19 @@ jobs:
       - name: Sync Android project
         run: npm run android:sync
 
-      - name: Build debug APK
-        run: cd android && ./gradlew assembleDebug
+      - name: Build signed release APK
+        run: |
+          VERSION_NAME="${{ github.event.release.tag_name }}"
+          VERSION_NAME="${VERSION_NAME#v}"
+          VERSION_CODE="${{ github.run_number }}"
+          cd android && ./gradlew assembleRelease \
+            -PAPP_VERSION_NAME="$VERSION_NAME" \
+            -PAPP_VERSION_CODE="$VERSION_CODE"
 
       - name: Rename APK for release
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/markdown-reader-${{ github.event.release.tag_name }}-android-debug.apk
+        run: cp android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/markdown-reader-${{ github.event.release.tag_name }}-android-release.apk
 
       - name: Upload Android APK to release
-        run: gh release upload "${{ github.event.release.tag_name }}" "android/app/build/outputs/apk/debug/markdown-reader-${{ github.event.release.tag_name }}-android-debug.apk" --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" "android/app/build/outputs/apk/release/markdown-reader-${{ github.event.release.tag_name }}-android-release.apk" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
