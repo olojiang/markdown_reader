@@ -32,3 +32,22 @@ export interface ReaderPreference {
   fontColor: string
   backgroundColor: string
 }
+
+export interface ChapterFixItem {
+  originalIndex: number
+  originalTitle: string
+  chapterNumber: number | null
+  correctedTitle: string
+}
+
+export interface FixReport {
+  isOrdered: boolean
+  totalChapters: number
+  fixedCount: number
+  items: ChapterFixItem[]
+}
+
+export interface FixResult {
+  fixedMarkdown: string
+  report: FixReport
+}

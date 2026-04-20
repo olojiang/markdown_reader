@@ -1,4 +1,4 @@
-import type { ChapterItem, ParsedDocument } from './reader-types'
+import type { ChapterItem, ParsedDocument, FixReport, FixResult, ChapterFixItem } from './reader-types'
 
 interface HeadingPoint {
   level: number
@@ -141,4 +141,183 @@ function hasNarrativePrefix(lines: string[]): boolean {
 
     return !headingPattern.test(trimmed)
   })
+}
+
+// 章节号提取正则：支持 "1. 第123章" 或 "第123章" 等格式
+const chapterNumberPattern = /^(?:\d+[.．、]\s*)?第(\d+)(章|话|节|回|卷|篇|集|部)/
+
+function extractChapterNumber(title: string): number | null {
+  const matched = title.match(chapterNumberPattern)
+  if (matched) {
+    return parseInt(matched[1], 10)
+  }
+  return null
+}
+
+function buildCorrectTitle(title: string, chapterNumber: number): string {
+  const matched = title.match(chapterNumberPattern)
+  if (matched) {
+    return `第${chapterNumber}${matched[2]} ${title.replace(matched[0], '').trim()}`.trim()
+  }
+  return title
+}
+
+export function fixChapterOrder(markdown: string): FixResult {
+  const lines = markdown.split(/\r?\n/)
+  const headingPoints: { lineIndex: number; level: number; title: string }[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const matched = lines[i].match(headingPattern)
+    if (matched) {
+      headingPoints.push({
+        lineIndex: i,
+        level: matched[1].length,
+        title: matched[2].trim()
+      })
+    }
+  }
+
+  if (headingPoints.length === 0) {
+    return {
+      fixedMarkdown: markdown,
+      report: {
+        isOrdered: true,
+        totalChapters: 0,
+        fixedCount: 0,
+        items: []
+      }
+    }
+  }
+
+  const splitLevel = detectSplitLevel(
+    headingPoints.map((h) => ({ level: h.level, title: h.title }))
+  )
+
+  const splitHeadings = headingPoints.filter((h) => h.level === splitLevel)
+
+  if (splitHeadings.length === 0) {
+    return {
+      fixedMarkdown: markdown,
+      report: {
+        isOrdered: true,
+        totalChapters: 0,
+        fixedCount: 0,
+        items: []
+      }
+    }
+  }
+
+  interface ChapterBlock {
+    originalIndex: number
+    startLine: number
+    endLine: number
+    title: string
+    chapterNumber: number
+    headingLevel: number
+  }
+
+  const chapters: ChapterBlock[] = []
+
+  for (let i = 0; i < splitHeadings.length; i++) {
+    const h = splitHeadings[i]
+    const num = extractChapterNumber(h.title)
+    if (num === null) continue
+
+    const startLine = h.lineIndex
+    const endLine = i < splitHeadings.length - 1
+      ? splitHeadings[i + 1].lineIndex - 1
+      : lines.length - 1
+
+    chapters.push({
+      originalIndex: chapters.length,
+      startLine,
+      endLine,
+      title: h.title,
+      chapterNumber: num,
+      headingLevel: h.level
+    })
+  }
+
+  if (chapters.length === 0) {
+    return {
+      fixedMarkdown: markdown,
+      report: {
+        isOrdered: true,
+        totalChapters: 0,
+        fixedCount: 0,
+        items: []
+      }
+    }
+  }
+
+  const sorted = [...chapters].sort((a, b) => a.chapterNumber - b.chapterNumber)
+
+  // Check if already ordered by comparing original indices
+  let isOrdered = true
+  for (let i = 0; i < chapters.length; i++) {
+    if (chapters[i].originalIndex !== sorted[i].originalIndex) {
+      isOrdered = false
+      break
+    }
+  }
+
+  if (isOrdered) {
+    const items: ChapterFixItem[] = chapters.map((c) => ({
+      originalIndex: c.originalIndex,
+      originalTitle: c.title,
+      chapterNumber: c.chapterNumber,
+      correctedTitle: c.title
+    }))
+
+    return {
+      fixedMarkdown: markdown,
+      report: {
+        isOrdered: true,
+        totalChapters: chapters.length,
+        fixedCount: 0,
+        items
+      }
+    }
+  }
+
+  // Build fixed markdown by reconstructing in sorted order
+  const headingPrefix = '#'.repeat(splitLevel)
+  const fixedChapterBlocks: string[] = []
+  const items: ChapterFixItem[] = []
+
+  for (let i = 0; i < sorted.length; i++) {
+    const chapter = sorted[i]
+    const correctedTitle = buildCorrectTitle(chapter.title, i + 1)
+
+    items.push({
+      originalIndex: chapter.originalIndex,
+      originalTitle: chapter.title,
+      chapterNumber: i + 1,
+      correctedTitle
+    })
+
+    fixedChapterBlocks.push(`${headingPrefix} ${correctedTitle}`)
+    for (let j = chapter.startLine + 1; j <= chapter.endLine; j++) {
+      fixedChapterBlocks.push(lines[j])
+    }
+
+    if (i < sorted.length - 1) {
+      fixedChapterBlocks.push('')
+    }
+  }
+
+  const fixedMarkdown = fixedChapterBlocks.join('\n')
+
+  // Count how many chapters moved to a different position
+  const fixedCount = sorted.filter((s, i) => s.originalIndex !== i).length
+
+  return {
+    fixedMarkdown,
+    report: {
+      isOrdered: false,
+      totalChapters: chapters.length,
+      fixedCount,
+      items
+    }
+  }
 }

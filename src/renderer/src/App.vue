@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 
-import { parseMarkdownDocument } from '@shared/markdown-parser'
+import { fixChapterOrder, parseMarkdownDocument } from '@shared/markdown-parser'
 import { DEFAULT_READER_PREFERENCE } from '@shared/reader-defaults'
 import { READER_THEME_OPTIONS } from '@shared/reader-themes'
 import type {
@@ -11,7 +11,8 @@ import type {
   ReaderLastOpenedSession,
   ReaderPosition,
   ReaderPreference,
-  ReaderThemeKey
+  ReaderThemeKey,
+  FixResult
 } from '@shared/reader-types'
 
 import ChapterList from './components/ChapterList.vue'
@@ -52,6 +53,7 @@ type MdReaderCompactPanel = 'chapters' | 'settings' | null
 const mdReaderPathInputModel = ref(sampleFilePath)
 const mdReaderCurrentSourceKey = ref('')
 const mdReaderParsedDocument = ref<ParsedDocument | null>(null)
+const mdReaderRawMarkdown = ref('')
 const mdReaderActiveChapterIndex = ref(0)
 const mdReaderRestoredScrollTop = ref(0)
 const mdReaderLatestScrollTop = ref(0)
@@ -232,6 +234,7 @@ async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markd
   mdReaderIsLoading.value = true
 
   try {
+    mdReaderRawMarkdown.value = markdownText
     const parsed = parseMarkdownDocument(markdownText, sourceLabel)
 
     mdReaderParsedDocument.value = parsed
@@ -261,6 +264,39 @@ async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markd
     if (mdReaderIsCompactLayout.value && chapterLength > 0) {
       closeCompactPanel()
     }
+  } finally {
+    mdReaderIsLoading.value = false
+  }
+}
+
+async function fixChapterOrderAndReload(): Promise<void> {
+  if (!mdReaderRawMarkdown.value) {
+    mdReaderStatusText.value = '请先加载一个 Markdown 文件'
+    return
+  }
+
+  mdReaderIsLoading.value = true
+  mdReaderStatusText.value = '正在修复章节顺序...'
+
+  try {
+    const result: FixResult = fixChapterOrder(mdReaderRawMarkdown.value)
+
+    if (result.report.isOrdered) {
+      mdReaderStatusText.value = `章节顺序正确，无需修复（${result.report.totalChapters} 章）`
+      return
+    }
+
+    mdReaderRawMarkdown.value = result.fixedMarkdown
+
+    const sourceKey = mdReaderCurrentSourceKey.value || 'fixed-' + Date.now()
+    const sourceLabel = mdReaderParsedDocument.value?.documentTitle || '修复后文档'
+
+    await loadMarkdownContent(sourceKey, sourceLabel, result.fixedMarkdown)
+
+    mdReaderStatusText.value = `已修复：重排 ${result.report.fixedCount} 章，共 ${result.report.totalChapters} 章`
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    mdReaderStatusText.value = `修复失败：${message}`
   } finally {
     mdReaderIsLoading.value = false
   }
@@ -968,6 +1004,16 @@ function clampNumber(value: number, min: number, max: number): number {
               </form>
             </section>
             <ReaderSettings :preference="mdReaderPreference" :themes="READER_THEME_OPTIONS" @change="handlePreferenceChange" />
+            <div class="md-reader-fix-chapter-section">
+              <button
+                type="button"
+                class="md-reader-fix-chapter-button"
+                :disabled="mdReaderIsLoading || !mdReaderHasLoadedDocument"
+                @click="fixChapterOrderAndReload"
+              >
+                修复章节顺序
+              </button>
+            </div>
           </section>
         </details>
       </aside>
@@ -1196,6 +1242,45 @@ function clampNumber(value: number, min: number, max: number): number {
   margin-bottom: 0;
   font-size: 13px;
   color: var(--md-text-subtle);
+}
+
+.md-reader-fix-chapter-section {
+  padding: 12px;
+  border-top: 1px solid var(--md-stroke);
+}
+
+.md-reader-fix-chapter-button {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--md-stroke-strong);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fffdf7 0%, #f6edd9 100%);
+  color: var(--md-text-main);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+  box-shadow: 0 3px 10px rgba(57, 45, 20, 0.12);
+}
+
+.md-reader-fix-chapter-button:hover:not(:disabled) {
+  filter: brightness(1.01);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(57, 45, 20, 0.18);
+}
+
+.md-reader-fix-chapter-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.md-reader-fix-chapter-button:focus-visible {
+  outline: none;
+  box-shadow: var(--md-focus-ring);
+}
+
+.md-reader-fix-chapter-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .md-reader-workspace-shell {
