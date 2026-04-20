@@ -1306,6 +1306,7 @@ function clampNumber(value: number, min: number, max: number): number {
   border-radius: 12px;
   background: var(--md-surface-2);
   box-shadow: var(--md-shadow-soft);
+  overflow: hidden;
 }
 
 .md-reader-sidebar-panel-summary {
@@ -1391,6 +1392,7 @@ function clampNumber(value: number, min: number, max: number): number {
   background: var(--md-surface-2);
   padding: 10px;
   box-shadow: var(--md-shadow-soft);
+  flex-shrink: 0;
 }
 
 .md-reader-workspace-navigation-nav {
@@ -1437,6 +1439,8 @@ function clampNumber(value: number, min: number, max: number): number {
 
   .md-reader-workspace-main {
     min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .md-reader-workspace-navigation-nav {
