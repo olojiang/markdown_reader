@@ -128,6 +128,39 @@ describe('createReaderStore', () => {
     })
   })
 
+  it('persists and reloads ordered tab sessions', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'md-reader-store-'))
+    const store = createReaderStore(join(tempDir, 'reader-store.json'))
+
+    await store.saveLastOpenedSession({
+      sourceType: 'path',
+      sourceKey: '/book/b.md',
+      sourceLabel: 'b.md',
+      filePath: '/book/b.md',
+      activeTabId: 'tab:/book/b.md',
+      tabs: [
+        {
+          id: 'tab:/book/a.md',
+          sourceType: 'path',
+          sourceKey: '/book/a.md',
+          sourceLabel: 'a.md',
+          filePath: '/book/a.md'
+        },
+        {
+          id: 'tab:/book/b.md',
+          sourceType: 'path',
+          sourceKey: '/book/b.md',
+          sourceLabel: 'b.md',
+          filePath: '/book/b.md'
+        }
+      ]
+    })
+
+    const value = await store.loadLastOpenedSession()
+    expect(value?.activeTabId).toBe('tab:/book/b.md')
+    expect(value?.tabs?.map((tab) => tab.sourceKey)).toEqual(['/book/a.md', '/book/b.md'])
+  })
+
   it('ignores invalid last opened session structure', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'md-reader-store-'))
     const storagePath = join(tempDir, 'reader-store.json')

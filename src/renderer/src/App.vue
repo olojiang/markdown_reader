@@ -11,6 +11,7 @@ import type {
   ReaderLastOpenedSession,
   ReaderPosition,
   ReaderPreference,
+  ReaderSessionTab,
   ReaderThemeKey,
   FixResult
 } from '@shared/reader-types'
@@ -48,9 +49,17 @@ interface MobileReaderStoreData {
   lastBookSnapshot: ReaderCachedBookSnapshot | null
 }
 
+interface ReaderOpenTab extends ReaderSessionTab {
+  markdownText: string
+  savedMarkdownText: string
+  isDirty: boolean
+}
+
 type MdReaderCompactPanel = 'chapters' | 'settings' | null
 
 const mdReaderPathInputModel = ref(sampleFilePath)
+const mdReaderTabs = ref<ReaderOpenTab[]>([])
+const mdReaderActiveTabId = ref('')
 const mdReaderCurrentSourceKey = ref('')
 const mdReaderParsedDocument = ref<ParsedDocument | null>(null)
 const mdReaderRawMarkdown = ref('')
@@ -80,6 +89,13 @@ const mdReaderShowsConfigPanel = computed(
 )
 const mdReaderShowChapterPanel = computed(() => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value === 'chapters')
 const mdReaderShowSettingsPanel = computed(() => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value === 'settings')
+const mdReaderActiveTab = computed(() => mdReaderTabs.value.find((tab) => tab.id === mdReaderActiveTabId.value) ?? null)
+const mdReaderHasOpenTabs = computed(() => mdReaderTabs.value.length > 0)
+const mdReaderUnsavedTabCount = computed(() => mdReaderTabs.value.filter((tab) => tab.isDirty).length)
+const mdReaderCanSaveCurrentTab = computed(() => {
+  const activeTab = mdReaderActiveTab.value
+  return Boolean(mdReaderSupportsPathOpen.value && activeTab?.sourceType === 'path' && activeTab.filePath && activeTab.isDirty)
+})
 const mdReaderChapterProgressText = computed(() => {
   if (mdReaderChapterItems.value.length === 0) {
     return '未加载章节'
@@ -94,16 +110,23 @@ const mdReaderShowFloatingPanelButtons = computed(() => mdReaderIsCompactLoadedM
 let savePositionTimer: number | null = null
 let compactLayoutMediaQuery: MediaQueryList | null = null
 let mobileReaderStoreCache: MobileReaderStoreData | null = null
+let draggedTabId = ''
 
 onMounted(() => {
   setupCompactLayoutWatcher()
+  writeReaderDebugLog('mounted', {
+    supportsPathOpen: mdReaderSupportsPathOpen.value,
+    initialTabsCount: mdReaderTabs.value.length
+  })
   void loadPreference()
   void restoreLastReadingSession()
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   teardownCompactLayoutWatcher()
 
   if (savePositionTimer !== null) {
@@ -112,6 +135,8 @@ onBeforeUnmount(() => {
   }
 
   void persistReaderPosition(mdReaderLatestScrollTop.value)
+  updateActiveTabFromCurrentDocument()
+  void saveCurrentTabSession('before-unmount')
 })
 
 function setupCompactLayoutWatcher(): void {
@@ -202,8 +227,21 @@ async function loadMarkdownFile(filePath: string): Promise<void> {
   }
 
   try {
+    const existingTab = mdReaderTabs.value.find((tab) => tab.sourceType === 'path' && tab.filePath === filePath)
+    if (existingTab) {
+      await activateReaderTab(existingTab.id)
+      return
+    }
+
     const markdownText = await window.electronAPI.readMarkdownFile(filePath)
-    await loadMarkdownContent(filePath, filePath, markdownText)
+    await openMarkdownContentTab({
+      sourceType: 'path',
+      sourceKey: filePath,
+      sourceLabel: filePath,
+      filePath,
+      markdownText,
+      savedMarkdownText: markdownText
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     mdReaderStatusText.value = `加载失败：${message}`
@@ -221,7 +259,13 @@ async function handleWebFileInputChange(event: Event): Promise<void> {
   try {
     const markdownText = await file.text()
     const sourceKey = `web-file:${file.name}:${file.size}:${file.lastModified}`
-    await loadMarkdownContent(sourceKey, file.name, markdownText)
+    await openMarkdownContentTab({
+      sourceType: 'cachedText',
+      sourceKey,
+      sourceLabel: file.name,
+      markdownText,
+      savedMarkdownText: markdownText
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     mdReaderStatusText.value = `加载失败：${message}`
@@ -230,7 +274,79 @@ async function handleWebFileInputChange(event: Event): Promise<void> {
   }
 }
 
-async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markdownText: string): Promise<void> {
+async function openMarkdownContentTab(input: {
+  sourceType: ReaderOpenTab['sourceType']
+  sourceKey: string
+  sourceLabel: string
+  filePath?: string
+  markdownText: string
+  savedMarkdownText: string
+}): Promise<void> {
+  const existingTab = mdReaderTabs.value.find((tab) => tab.sourceKey === input.sourceKey)
+  if (existingTab) {
+    writeReaderDebugLog('tab:open-existing', {
+      requested: summarizeTabInput(input),
+      existingTabId: existingTab.id
+    })
+    await activateReaderTab(existingTab.id)
+    return
+  }
+
+  writeReaderDebugLog('tab:open-new:start', summarizeTabInput(input))
+  updateActiveTabFromCurrentDocument()
+  await persistReaderPosition(mdReaderLatestScrollTop.value)
+
+  const tab: ReaderOpenTab = {
+    id: createReaderTabId(input.sourceKey),
+    sourceType: input.sourceType,
+    sourceKey: input.sourceKey,
+    sourceLabel: input.sourceLabel,
+    filePath: input.filePath,
+    markdownText: input.markdownText,
+    savedMarkdownText: input.savedMarkdownText,
+    isDirty: input.markdownText !== input.savedMarkdownText
+  }
+
+  mdReaderTabs.value.push(tab)
+  writeReaderDebugLog('tab:open-new:pushed', {
+    tab: summarizeTab(tab),
+    tabs: summarizeOpenTabs()
+  })
+  await saveCurrentTabSession('open-new-tab')
+  await activateReaderTab(tab.id)
+}
+
+async function activateReaderTab(tabId: string): Promise<void> {
+  if (tabId === mdReaderActiveTabId.value && mdReaderParsedDocument.value) {
+    writeReaderDebugLog('tab:activate:skip-current', {
+      tabId,
+      tabs: summarizeOpenTabs()
+    })
+    return
+  }
+
+  writeReaderDebugLog('tab:activate:start', {
+    requestedTabId: tabId,
+    previousActiveTabId: mdReaderActiveTabId.value,
+    tabs: summarizeOpenTabs()
+  })
+  updateActiveTabFromCurrentDocument()
+  await persistReaderPosition(mdReaderLatestScrollTop.value)
+
+  const tab = mdReaderTabs.value.find((item) => item.id === tabId)
+  if (!tab) {
+    writeReaderDebugLog('tab:activate:missing', {
+      requestedTabId: tabId,
+      tabs: summarizeOpenTabs()
+    })
+    return
+  }
+
+  await loadMarkdownContent(tab.sourceKey, tab.sourceLabel, tab.markdownText, tab.id)
+  await saveCurrentTabSession('activate-tab')
+}
+
+async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markdownText: string, tabId: string): Promise<void> {
   mdReaderIsLoading.value = true
 
   try {
@@ -239,6 +355,7 @@ async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markd
 
     mdReaderParsedDocument.value = parsed
     mdReaderCurrentSourceKey.value = sourceKey
+    mdReaderActiveTabId.value = tabId
 
     const savedPosition = await loadReaderPosition(sourceKey)
     const chapterLength = parsed.chapters.length
@@ -247,8 +364,6 @@ async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markd
     mdReaderActiveChapterIndex.value = safeChapterIndex
     mdReaderRestoredScrollTop.value = Math.max(savedPosition?.scrollTop ?? 0, 0)
     mdReaderLatestScrollTop.value = mdReaderRestoredScrollTop.value
-
-    await saveLastOpenedSession(buildLastOpenedSession(sourceKey, sourceLabel))
 
     if (!mdReaderSupportsPathOpen.value) {
       await saveLastBookSnapshot({
@@ -287,13 +402,19 @@ async function fixChapterOrderAndReload(): Promise<void> {
     }
 
     mdReaderRawMarkdown.value = result.fixedMarkdown
+    updateActiveTabFromCurrentDocument()
+    if (mdReaderActiveTabId.value && mdReaderCurrentSourceKey.value) {
+      const activeTab = mdReaderActiveTab.value
+      await loadMarkdownContent(
+        mdReaderCurrentSourceKey.value,
+        activeTab?.sourceLabel ?? mdReaderParsedDocument.value?.documentTitle ?? '修复后文档',
+        result.fixedMarkdown,
+        mdReaderActiveTabId.value
+      )
+    }
+    await saveCurrentTabSession('fix-chapter-order')
 
-    const sourceKey = mdReaderCurrentSourceKey.value || 'fixed-' + Date.now()
-    const sourceLabel = mdReaderParsedDocument.value?.documentTitle || '修复后文档'
-
-    await loadMarkdownContent(sourceKey, sourceLabel, result.fixedMarkdown)
-
-    mdReaderStatusText.value = `已修复：重排 ${result.report.fixedCount} 章，共 ${result.report.totalChapters} 章`
+    mdReaderStatusText.value = `已修复：重排 ${result.report.fixedCount} 章，共 ${result.report.totalChapters} 章，请保存当前标签页。`
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     mdReaderStatusText.value = `修复失败：${message}`
@@ -302,56 +423,373 @@ async function fixChapterOrderAndReload(): Promise<void> {
   }
 }
 
-function buildLastOpenedSession(sourceKey: string, sourceLabel: string): ReaderLastOpenedSession {
-  if (mdReaderSupportsPathOpen.value) {
-    return {
-      sourceType: 'path',
-      sourceKey,
-      sourceLabel,
-      filePath: sourceKey
-    }
+async function saveCurrentMarkdownTab(): Promise<void> {
+  updateActiveTabFromCurrentDocument()
+
+  const activeTab = mdReaderActiveTab.value
+  if (!activeTab || activeTab.sourceType !== 'path' || !activeTab.filePath) {
+    mdReaderStatusText.value = '当前标签页不支持保存到路径。'
+    return
+  }
+
+  try {
+    await window.electronAPI.writeMarkdownFile(activeTab.filePath, activeTab.markdownText)
+    activeTab.savedMarkdownText = activeTab.markdownText
+    activeTab.isDirty = false
+    mdReaderStatusText.value = `已保存：${displayTabLabel(activeTab)}`
+    await saveCurrentTabSession('save-current-markdown-tab')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    mdReaderStatusText.value = `保存失败：${message}`
+  }
+}
+
+async function closeReaderTab(tabId: string): Promise<void> {
+  updateActiveTabFromCurrentDocument()
+
+  const tabIndex = mdReaderTabs.value.findIndex((tab) => tab.id === tabId)
+  if (tabIndex < 0) {
+    writeReaderDebugLog('tab:close:missing', {
+      requestedTabId: tabId,
+      tabs: summarizeOpenTabs()
+    })
+    return
+  }
+
+  const tab = mdReaderTabs.value[tabIndex]
+  if (tab.isDirty && !window.confirm(`“${displayTabLabel(tab)}”有未保存改动，关闭后会丢失。确定关闭吗？`)) {
+    writeReaderDebugLog('tab:close:cancelled-dirty', {
+      tab: summarizeTab(tab),
+      tabs: summarizeOpenTabs()
+    })
+    return
+  }
+
+  writeReaderDebugLog('tab:close:start', {
+    tab: summarizeTab(tab),
+    tabIndex,
+    tabsBefore: summarizeOpenTabs()
+  })
+  const wasActive = tab.id === mdReaderActiveTabId.value
+  mdReaderTabs.value.splice(tabIndex, 1)
+
+  if (mdReaderTabs.value.length === 0) {
+    clearCurrentReaderDocument()
+    writeReaderDebugLog('tab:close:last-tab', {
+      closedTabId: tab.id
+    })
+    await saveLastOpenedSession(null)
+    return
+  }
+
+  await saveCurrentTabSession('close-tab')
+
+  if (wasActive) {
+    const nextTab = mdReaderTabs.value[Math.min(tabIndex, mdReaderTabs.value.length - 1)]
+    await activateReaderTab(nextTab.id)
+    return
+  }
+}
+
+function handleTabDragStart(tabId: string, event: DragEvent): void {
+  draggedTabId = tabId
+  event.dataTransfer?.setData('text/plain', tabId)
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function handleTabDrop(targetTabId: string): void {
+  const sourceTabId = draggedTabId
+  draggedTabId = ''
+
+  if (!sourceTabId || sourceTabId === targetTabId) {
+    writeReaderDebugLog('tab:reorder:skip', {
+      sourceTabId,
+      targetTabId,
+      tabs: summarizeOpenTabs()
+    })
+    return
+  }
+
+  const sourceIndex = mdReaderTabs.value.findIndex((tab) => tab.id === sourceTabId)
+  const targetIndex = mdReaderTabs.value.findIndex((tab) => tab.id === targetTabId)
+  if (sourceIndex < 0 || targetIndex < 0) {
+    writeReaderDebugLog('tab:reorder:missing', {
+      sourceTabId,
+      targetTabId,
+      sourceIndex,
+      targetIndex,
+      tabs: summarizeOpenTabs()
+    })
+    return
+  }
+
+  writeReaderDebugLog('tab:reorder:start', {
+    sourceTabId,
+    targetTabId,
+    sourceIndex,
+    targetIndex,
+    tabsBefore: summarizeOpenTabs()
+  })
+  const [sourceTab] = mdReaderTabs.value.splice(sourceIndex, 1)
+  mdReaderTabs.value.splice(targetIndex, 0, sourceTab)
+  void saveCurrentTabSession('reorder-tabs')
+}
+
+function handleTabDragEnd(): void {
+  draggedTabId = ''
+}
+
+function buildLastOpenedSessionFromTabs(): ReaderLastOpenedSession | null {
+  updateActiveTabFromCurrentDocument()
+
+  const tabs = mdReaderTabs.value.map((tab): ReaderSessionTab => ({
+    id: tab.id,
+    sourceType: tab.sourceType,
+    sourceKey: tab.sourceKey,
+    sourceLabel: tab.sourceLabel,
+    filePath: tab.filePath
+  }))
+
+  const activeTab = mdReaderActiveTab.value ?? mdReaderTabs.value[0]
+  if (!activeTab) {
+    return null
   }
 
   return {
-    sourceType: 'cachedText',
-    sourceKey,
-    sourceLabel
+    sourceType: activeTab.sourceType,
+    sourceKey: activeTab.sourceKey,
+    sourceLabel: activeTab.sourceLabel,
+    filePath: activeTab.filePath,
+    tabs,
+    activeTabId: activeTab.id
   }
+}
+
+async function saveCurrentTabSession(reason = 'unspecified'): Promise<void> {
+  const session = buildLastOpenedSessionFromTabs()
+  writeReaderDebugLog('session:save:start', {
+    reason,
+    session: summarizeSession(session),
+    tabs: summarizeOpenTabs()
+  })
+  await saveLastOpenedSession(session)
+  writeReaderDebugLog('session:save:complete', {
+    reason,
+    session: summarizeSession(session)
+  })
 }
 
 async function restoreLastReadingSession(): Promise<void> {
   const lastOpened = await loadLastOpenedSession()
+  writeReaderDebugLog('session:restore:loaded', summarizeSession(lastOpened))
 
   if (!lastOpened) {
     return
   }
 
-  if (lastOpened.sourceType === 'path' && mdReaderSupportsPathOpen.value && lastOpened.filePath) {
-    mdReaderPathInputModel.value = lastOpened.filePath
+  const sessionTabs = normalizeSessionTabs(lastOpened)
+  writeReaderDebugLog('session:restore:tabs-normalized', {
+    tabsCount: sessionTabs.length,
+    tabs: sessionTabs.map(summarizeTab)
+  })
+  const restoredTabs: ReaderOpenTab[] = []
 
-    try {
-      await loadMarkdownFile(lastOpened.filePath)
-      mdReaderStatusText.value = `已自动恢复：${lastOpened.sourceLabel}`
-    } catch {
-      mdReaderStatusText.value = `未能自动恢复上次文件：${lastOpened.sourceLabel}`
+  for (const tab of sessionTabs) {
+    const restoredTab = await restoreSavedTab(tab)
+    if (restoredTab) {
+      restoredTabs.push(restoredTab)
+      writeReaderDebugLog('session:restore:tab-success', summarizeTab(restoredTab))
+    } else {
+      writeReaderDebugLog('session:restore:tab-failed', summarizeTab(tab))
     }
+  }
 
+  if (restoredTabs.length === 0) {
+    writeReaderDebugLog('session:restore:no-tabs-restored', {
+      requestedTabsCount: sessionTabs.length
+    })
     return
   }
 
-  if (lastOpened.sourceType === 'cachedText' && !mdReaderSupportsPathOpen.value) {
-    const snapshot = await loadLastBookSnapshot()
-    if (!snapshot) {
-      return
-    }
+  mdReaderTabs.value = restoredTabs
+  const activeTabId =
+    lastOpened.activeTabId && restoredTabs.some((tab) => tab.id === lastOpened.activeTabId) ? lastOpened.activeTabId : restoredTabs[0].id
+  writeReaderDebugLog('session:restore:activating', {
+    activeTabId,
+    restoredTabs: restoredTabs.map(summarizeTab)
+  })
+  await activateReaderTab(activeTabId)
+  mdReaderStatusText.value = `已自动恢复 ${restoredTabs.length} 个标签页`
+}
 
-    if (snapshot.sourceKey !== lastOpened.sourceKey) {
-      return
-    }
-
-    await loadMarkdownContent(snapshot.sourceKey, snapshot.sourceLabel, snapshot.markdownText)
-    mdReaderStatusText.value = `已自动恢复：${snapshot.sourceLabel}`
+function normalizeSessionTabs(session: ReaderLastOpenedSession): ReaderSessionTab[] {
+  if (session.tabs?.length) {
+    return session.tabs
   }
+
+  return [
+    {
+      id: createReaderTabId(session.sourceKey),
+      sourceType: session.sourceType,
+      sourceKey: session.sourceKey,
+      sourceLabel: session.sourceLabel,
+      filePath: session.filePath
+    }
+  ]
+}
+
+async function restoreSavedTab(tab: ReaderSessionTab): Promise<ReaderOpenTab | null> {
+  if (tab.sourceType === 'path' && mdReaderSupportsPathOpen.value && tab.filePath) {
+    try {
+      const markdownText = await window.electronAPI.readMarkdownFile(tab.filePath)
+      mdReaderPathInputModel.value = tab.filePath
+      return {
+        ...tab,
+        markdownText,
+        savedMarkdownText: markdownText,
+        isDirty: false
+      }
+    } catch (error) {
+      writeReaderDebugLog('session:restore:path-read-failed', {
+        tab: summarizeTab(tab),
+        message: error instanceof Error ? error.message : String(error)
+      })
+      return null
+    }
+  }
+
+  if (tab.sourceType === 'cachedText' && !mdReaderSupportsPathOpen.value) {
+    const snapshot = await loadLastBookSnapshot()
+    if (!snapshot || snapshot.sourceKey !== tab.sourceKey) {
+      writeReaderDebugLog('session:restore:cached-snapshot-mismatch', {
+        tab: summarizeTab(tab),
+        snapshotSourceKey: snapshot?.sourceKey ?? null
+      })
+      return null
+    }
+
+    return {
+      ...tab,
+      markdownText: snapshot.markdownText,
+      savedMarkdownText: snapshot.markdownText,
+      isDirty: false
+    }
+  }
+
+  return null
+}
+
+function createReaderTabId(sourceKey: string): string {
+  return `tab:${sourceKey}`
+}
+
+function displayTabLabel(tab: ReaderSessionTab): string {
+  const label = tab.sourceLabel || tab.filePath || tab.sourceKey
+  const normalized = label.replace(/\\/g, '/')
+  const lastSegment = normalized.split('/').filter(Boolean).at(-1)
+  return lastSegment || label || '未命名'
+}
+
+function writeReaderDebugLog(event: string, payload?: Record<string, unknown>): void {
+  if (!mdReaderSupportsPathOpen.value || typeof window.electronAPI.writeReaderDebugLog !== 'function') {
+    return
+  }
+
+  void window.electronAPI.writeReaderDebugLog(event, {
+    activeTabId: mdReaderActiveTabId.value,
+    tabsCount: mdReaderTabs.value.length,
+    payload: payload ?? null
+  }).catch((error) => {
+    console.warn('Failed to write reader debug log', error)
+  })
+}
+
+function summarizeOpenTabs(): Array<Record<string, unknown>> {
+  return mdReaderTabs.value.map(summarizeTab)
+}
+
+function summarizeTab(tab: ReaderSessionTab): Record<string, unknown> {
+  return {
+    id: tab.id,
+    sourceType: tab.sourceType,
+    sourceKey: tab.sourceKey,
+    sourceLabel: tab.sourceLabel,
+    filePath: tab.filePath ?? null
+  }
+}
+
+function summarizeTabInput(input: {
+  sourceType: ReaderOpenTab['sourceType']
+  sourceKey: string
+  sourceLabel: string
+  filePath?: string
+}): Record<string, unknown> {
+  return {
+    sourceType: input.sourceType,
+    sourceKey: input.sourceKey,
+    sourceLabel: input.sourceLabel,
+    filePath: input.filePath ?? null
+  }
+}
+
+function summarizeSession(session: ReaderLastOpenedSession | null): Record<string, unknown> {
+  return {
+    hasSession: Boolean(session),
+    sourceType: session?.sourceType ?? null,
+    sourceKey: session?.sourceKey ?? null,
+    sourceLabel: session?.sourceLabel ?? null,
+    filePath: session?.filePath ?? null,
+    activeTabId: session?.activeTabId ?? null,
+    tabsCount: session?.tabs?.length ?? 0,
+    tabs: session?.tabs?.map(summarizeTab) ?? []
+  }
+}
+
+function updateActiveTabFromCurrentDocument(nextSourceLabel?: string): void {
+  const activeTab = mdReaderActiveTab.value
+  if (!activeTab || !mdReaderCurrentSourceKey.value) {
+    return
+  }
+
+  activeTab.markdownText = mdReaderRawMarkdown.value
+  if (nextSourceLabel) {
+    activeTab.sourceLabel = nextSourceLabel
+  }
+  activeTab.isDirty = activeTab.markdownText !== activeTab.savedMarkdownText
+}
+
+function clearCurrentReaderDocument(): void {
+  mdReaderActiveTabId.value = ''
+  mdReaderCurrentSourceKey.value = ''
+  mdReaderParsedDocument.value = null
+  mdReaderRawMarkdown.value = ''
+  mdReaderActiveChapterIndex.value = 0
+  mdReaderRestoredScrollTop.value = 0
+  mdReaderLatestScrollTop.value = 0
+  mdReaderStatusText.value = '请选择 Markdown 文件，或在桌面端输入路径打开。'
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent): string | undefined {
+  updateActiveTabFromCurrentDocument()
+  const unsavedCount = mdReaderTabs.value.filter((tab) => tab.isDirty).length
+  if (unsavedCount === 0) {
+    void persistReaderPosition(mdReaderLatestScrollTop.value)
+    void saveCurrentTabSession('beforeunload-clean')
+    return undefined
+  }
+
+  const message = `有 ${unsavedCount} 个标签页存在未保存改动，确定关闭应用吗？`
+  if (window.confirm(message)) {
+    void persistReaderPosition(mdReaderLatestScrollTop.value)
+    void saveCurrentTabSession('beforeunload-confirmed-dirty')
+    return undefined
+  }
+
+  event.preventDefault()
+  event.returnValue = message
+  return message
 }
 
 async function handleChapterSwitch(index: number): Promise<void> {
@@ -515,8 +953,10 @@ async function loadLastOpenedSession(): Promise<ReaderLastOpenedSession | null> 
 }
 
 async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Promise<void> {
+  writeReaderDebugLog('session:persist:start', summarizeSession(value))
   if (mdReaderSupportsPathOpen.value) {
     await window.electronAPI.saveLastOpenedSession(value)
+    writeReaderDebugLog('session:persist:desktop-complete', summarizeSession(value))
     return
   }
 
@@ -524,15 +964,18 @@ async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Pro
   if (mobileStore) {
     mobileStore.lastOpenedSession = value
     await saveMobileReaderStore(mobileStore)
+    writeReaderDebugLog('session:persist:mobile-complete', summarizeSession(value))
     return
   }
 
   if (!value) {
     safeLocalStorageRemove(READER_LAST_OPENED_STORAGE_KEY)
+    writeReaderDebugLog('session:persist:web-cleared')
     return
   }
 
   safeLocalStorageSet(READER_LAST_OPENED_STORAGE_KEY, JSON.stringify(value))
+  writeReaderDebugLog('session:persist:web-complete', summarizeSession(value))
 }
 
 async function loadLastBookSnapshot(): Promise<ReaderCachedBookSnapshot | null> {
@@ -586,12 +1029,57 @@ function normalizeLastOpenedSession(raw: unknown): ReaderLastOpenedSession | nul
     return null
   }
 
+  const normalized: ReaderLastOpenedSession = {
+    sourceType: candidate.sourceType,
+    sourceKey: candidate.sourceKey,
+    sourceLabel: candidate.sourceLabel
+  }
+
+  if (candidate.sourceType === 'path') {
+    if (typeof candidate.filePath !== 'string' || candidate.filePath.length === 0) {
+      return null
+    }
+
+    normalized.filePath = candidate.filePath
+  }
+
+  const tabs = Array.isArray(candidate.tabs) ? candidate.tabs.map(normalizeSessionTab).filter((tab): tab is ReaderSessionTab => tab !== null) : []
+  if (tabs.length > 0) {
+    normalized.tabs = tabs
+  }
+
+  if (typeof candidate.activeTabId === 'string' && candidate.activeTabId.length > 0) {
+    normalized.activeTabId = candidate.activeTabId
+  }
+
+  return normalized
+}
+
+function normalizeSessionTab(raw: unknown): ReaderSessionTab | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const candidate = raw as Partial<ReaderSessionTab>
+  if (typeof candidate.id !== 'string' || candidate.id.length === 0) {
+    return null
+  }
+
+  if (candidate.sourceType !== 'path' && candidate.sourceType !== 'cachedText') {
+    return null
+  }
+
+  if (typeof candidate.sourceKey !== 'string' || typeof candidate.sourceLabel !== 'string') {
+    return null
+  }
+
   if (candidate.sourceType === 'path') {
     if (typeof candidate.filePath !== 'string' || candidate.filePath.length === 0) {
       return null
     }
 
     return {
+      id: candidate.id,
       sourceType: 'path',
       sourceKey: candidate.sourceKey,
       sourceLabel: candidate.sourceLabel,
@@ -600,6 +1088,7 @@ function normalizeLastOpenedSession(raw: unknown): ReaderLastOpenedSession | nul
   }
 
   return {
+    id: candidate.id,
     sourceType: 'cachedText',
     sourceKey: candidate.sourceKey,
     sourceLabel: candidate.sourceLabel
@@ -929,6 +1418,28 @@ function clampNumber(value: number, min: number, max: number): number {
         可按标题分章阅读，支持记录阅读进度与样式偏好。
       </p>
 
+      <nav v-if="mdReaderHasOpenTabs" class="md-reader-tab-strip" aria-label="已打开文件">
+        <div
+          v-for="tab in mdReaderTabs"
+          :key="tab.id"
+          class="md-reader-tab-item"
+          :class="{ 'md-reader-tab-item-active': tab.id === mdReaderActiveTabId }"
+          draggable="true"
+          @dragstart="handleTabDragStart(tab.id, $event)"
+          @dragover.prevent
+          @drop.prevent="handleTabDrop(tab.id)"
+          @dragend="handleTabDragEnd"
+        >
+          <button type="button" class="md-reader-tab-select-button" :title="tab.sourceLabel" @click="activateReaderTab(tab.id)">
+            <span class="md-reader-tab-dirty-dot" :class="{ 'md-reader-tab-dirty-dot-visible': tab.isDirty }" aria-hidden="true"></span>
+            <span class="md-reader-tab-label">{{ displayTabLabel(tab) }}</span>
+          </button>
+          <button type="button" class="md-reader-tab-close-button" :aria-label="`关闭 ${displayTabLabel(tab)}`" @click.stop="closeReaderTab(tab.id)">
+            ×
+          </button>
+        </div>
+      </nav>
+
       <details v-if="mdReaderShowsConfigPanel" class="md-reader-header-panel-details" open>
         <summary class="md-reader-header-panel-summary">文件与阅读控制</summary>
 
@@ -952,6 +1463,15 @@ function clampNumber(value: number, min: number, max: number): number {
               <button type="button" class="md-reader-open-form-dialog-button" :disabled="mdReaderIsLoading" @click="openMarkdownByDialog">
                 {{ mdReaderSupportsPathOpen ? '选择文件' : '选择 Markdown 文件' }}
               </button>
+              <button
+                v-if="mdReaderSupportsPathOpen"
+                type="button"
+                class="md-reader-open-form-save-button"
+                :disabled="!mdReaderCanSaveCurrentTab || mdReaderIsLoading"
+                @click="saveCurrentMarkdownTab"
+              >
+                保存当前标签
+              </button>
             </div>
             <input
               ref="mdReaderWebFileInputRef"
@@ -965,6 +1485,9 @@ function clampNumber(value: number, min: number, max: number): number {
       </details>
 
       <p class="md-reader-open-status-text" role="status">{{ mdReaderStatusText }}</p>
+      <p v-if="mdReaderUnsavedTabCount > 0" class="md-reader-unsaved-status-text">
+        {{ mdReaderUnsavedTabCount }} 个标签页未保存
+      </p>
     </header>
 
     <div class="md-reader-workspace-shell" :class="{ 'md-reader-workspace-shell-reading-only': mdReaderCompactReadingMode }">
@@ -999,6 +1522,15 @@ function clampNumber(value: number, min: number, max: number): number {
                   </button>
                   <button type="button" class="md-reader-open-form-dialog-button" :disabled="mdReaderIsLoading" @click="openMarkdownByDialog">
                     {{ mdReaderSupportsPathOpen ? '选择文件' : '选择 Markdown 文件' }}
+                  </button>
+                  <button
+                    v-if="mdReaderSupportsPathOpen"
+                    type="button"
+                    class="md-reader-open-form-save-button"
+                    :disabled="!mdReaderCanSaveCurrentTab || mdReaderIsLoading"
+                    @click="saveCurrentMarkdownTab"
+                  >
+                    保存当前标签
                   </button>
                 </div>
               </form>
@@ -1142,6 +1674,82 @@ function clampNumber(value: number, min: number, max: number): number {
   color: var(--md-text-subtle);
 }
 
+.md-reader-tab-strip {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+
+.md-reader-tab-item {
+  min-width: 140px;
+  max-width: 260px;
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  border: 1px solid var(--md-stroke);
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.78);
+}
+
+.md-reader-tab-item-active {
+  border-color: var(--md-stroke-strong);
+  background: var(--md-surface-2);
+  box-shadow: inset 0 -2px 0 var(--md-accent);
+}
+
+.md-reader-tab-select-button,
+.md-reader-tab-close-button {
+  border: 0;
+  background: transparent;
+  color: var(--md-text-main);
+  cursor: pointer;
+}
+
+.md-reader-tab-select-button {
+  min-width: 0;
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.md-reader-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.md-reader-tab-dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.md-reader-tab-dirty-dot-visible {
+  background: #9f5a16;
+}
+
+.md-reader-tab-close-button {
+  width: 32px;
+  min-height: 32px;
+  border-left: 1px solid rgba(140, 122, 87, 0.25);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.md-reader-tab-close-button:hover {
+  background: rgba(140, 122, 87, 0.12);
+}
+
 .md-reader-header-panel-details {
   border: 1px solid var(--md-stroke);
   border-radius: 12px;
@@ -1191,6 +1799,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-submit-button,
 .md-reader-open-form-dialog-button,
+.md-reader-open-form-save-button,
 .md-reader-workspace-navigation-button,
 .md-reader-compact-topbar-button {
   min-height: 40px;
@@ -1207,6 +1816,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-submit-button:hover,
 .md-reader-open-form-dialog-button:hover,
+.md-reader-open-form-save-button:hover,
 .md-reader-workspace-navigation-button:hover,
 .md-reader-compact-topbar-button:hover {
   filter: brightness(1.01);
@@ -1216,6 +1826,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-submit-button:active,
 .md-reader-open-form-dialog-button:active,
+.md-reader-open-form-save-button:active,
 .md-reader-workspace-navigation-button:active,
 .md-reader-compact-topbar-button:active {
   transform: translateY(0);
@@ -1223,6 +1834,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-submit-button:focus-visible,
 .md-reader-open-form-dialog-button:focus-visible,
+.md-reader-open-form-save-button:focus-visible,
 .md-reader-workspace-navigation-button:focus-visible,
 .md-reader-compact-topbar-button:focus-visible,
 .md-reader-open-form-path-input:focus-visible {
@@ -1232,6 +1844,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-submit-button:disabled,
 .md-reader-open-form-dialog-button:disabled,
+.md-reader-open-form-save-button:disabled,
 .md-reader-workspace-navigation-button:disabled {
   cursor: not-allowed;
   opacity: 0.56;
@@ -1242,6 +1855,13 @@ function clampNumber(value: number, min: number, max: number): number {
   margin-bottom: 0;
   font-size: 13px;
   color: var(--md-text-subtle);
+}
+
+.md-reader-unsaved-status-text {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #8a4a13;
 }
 
 .md-reader-fix-chapter-section {
@@ -1306,7 +1926,6 @@ function clampNumber(value: number, min: number, max: number): number {
   border-radius: 12px;
   background: var(--md-surface-2);
   box-shadow: var(--md-shadow-soft);
-  overflow: hidden;
 }
 
 .md-reader-sidebar-panel-summary {
@@ -1393,6 +2012,7 @@ function clampNumber(value: number, min: number, max: number): number {
   padding: 10px;
   box-shadow: var(--md-shadow-soft);
   flex-shrink: 0;
+  height: 35px;
 }
 
 .md-reader-workspace-navigation-nav {
@@ -1486,6 +2106,7 @@ function clampNumber(value: number, min: number, max: number): number {
 @media (prefers-reduced-motion: reduce) {
   .md-reader-open-form-submit-button,
   .md-reader-open-form-dialog-button,
+  .md-reader-open-form-save-button,
   .md-reader-workspace-navigation-button,
   .md-reader-compact-topbar-button {
     transition: none;

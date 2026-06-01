@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 
 import { DEFAULT_READER_PREFERENCE } from '../shared/reader-defaults'
 import { getReaderThemeOption, READER_THEME_OPTIONS } from '../shared/reader-themes'
-import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderThemeKey } from '../shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderSessionTab, ReaderThemeKey } from '../shared/reader-types'
 
 interface ReaderStoreData {
   positions: Record<string, ReaderPosition>
@@ -11,9 +11,11 @@ interface ReaderStoreData {
   lastOpenedSession: ReaderLastOpenedSession | null
 }
 
+type ReaderStoreLogger = (event: string, payload?: Record<string, unknown>) => void
+
 export { DEFAULT_READER_PREFERENCE }
 
-export function createReaderStore(storagePath: string) {
+export function createReaderStore(storagePath: string, log?: ReaderStoreLogger) {
   async function loadPosition(filePath: string): Promise<ReaderPosition | null> {
     const data = await readStoreData(storagePath)
     return data.positions[filePath] ?? null
@@ -38,13 +40,16 @@ export function createReaderStore(storagePath: string) {
 
   async function loadLastOpenedSession(): Promise<ReaderLastOpenedSession | null> {
     const data = await readStoreData(storagePath)
+    log?.('loadLastOpenedSession', summarizeLastOpenedSession(data.lastOpenedSession))
     return data.lastOpenedSession
   }
 
   async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Promise<void> {
+    log?.('saveLastOpenedSession:start', summarizeLastOpenedSession(value))
     const data = await readStoreData(storagePath)
     data.lastOpenedSession = value
     await writeStoreData(storagePath, data)
+    log?.('saveLastOpenedSession:complete', summarizeLastOpenedSession(value))
   }
 
   return {
@@ -54,6 +59,18 @@ export function createReaderStore(storagePath: string) {
     savePreference,
     loadLastOpenedSession,
     saveLastOpenedSession
+  }
+}
+
+function summarizeLastOpenedSession(value: ReaderLastOpenedSession | null): Record<string, unknown> {
+  return {
+    hasSession: Boolean(value),
+    sourceType: value?.sourceType ?? null,
+    sourceKey: value?.sourceKey ?? null,
+    sourceLabel: value?.sourceLabel ?? null,
+    activeTabId: value?.activeTabId ?? null,
+    tabsCount: value?.tabs?.length ?? 0,
+    tabKeys: value?.tabs?.map((tab) => tab.sourceKey) ?? []
   }
 }
 
@@ -150,12 +167,57 @@ function normalizeLastOpenedSession(rawValue: unknown): ReaderLastOpenedSession 
     return null
   }
 
+  const normalized: ReaderLastOpenedSession = {
+    sourceType: candidate.sourceType,
+    sourceKey: candidate.sourceKey,
+    sourceLabel: candidate.sourceLabel
+  }
+
+  if (candidate.sourceType === 'path') {
+    if (typeof candidate.filePath !== 'string' || candidate.filePath.length === 0) {
+      return null
+    }
+
+    normalized.filePath = candidate.filePath
+  }
+
+  const tabs = Array.isArray(candidate.tabs) ? candidate.tabs.map(normalizeSessionTab).filter((tab): tab is ReaderSessionTab => tab !== null) : []
+  if (tabs.length > 0) {
+    normalized.tabs = tabs
+  }
+
+  if (typeof candidate.activeTabId === 'string' && candidate.activeTabId.length > 0) {
+    normalized.activeTabId = candidate.activeTabId
+  }
+
+  return normalized
+}
+
+function normalizeSessionTab(rawValue: unknown): ReaderSessionTab | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null
+  }
+
+  const candidate = rawValue as Partial<ReaderSessionTab>
+  if (typeof candidate.id !== 'string' || candidate.id.length === 0) {
+    return null
+  }
+
+  if (candidate.sourceType !== 'path' && candidate.sourceType !== 'cachedText') {
+    return null
+  }
+
+  if (typeof candidate.sourceKey !== 'string' || typeof candidate.sourceLabel !== 'string') {
+    return null
+  }
+
   if (candidate.sourceType === 'path') {
     if (typeof candidate.filePath !== 'string' || candidate.filePath.length === 0) {
       return null
     }
 
     return {
+      id: candidate.id,
       sourceType: 'path',
       sourceKey: candidate.sourceKey,
       sourceLabel: candidate.sourceLabel,
@@ -164,6 +226,7 @@ function normalizeLastOpenedSession(rawValue: unknown): ReaderLastOpenedSession 
   }
 
   return {
+    id: candidate.id,
     sourceType: 'cachedText',
     sourceKey: candidate.sourceKey,
     sourceLabel: candidate.sourceLabel

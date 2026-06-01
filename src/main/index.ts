@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
@@ -32,7 +32,35 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  const readerStore = createReaderStore(join(app.getPath('userData'), 'reader-store.json'))
+  const userDataPath = app.getPath('userData')
+  const readerDebugLogPath = join(userDataPath, 'reader-debug.jsonl')
+  const appendReaderDebugLog = async (event: string, payload?: unknown): Promise<void> => {
+    try {
+      await mkdir(userDataPath, { recursive: true })
+      await appendFile(
+        readerDebugLogPath,
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          pid: process.pid,
+          event,
+          payload: payload ?? null
+        }) + '\n',
+        'utf-8'
+      )
+    } catch (error) {
+      console.warn('Failed to write reader debug log', error)
+    }
+  }
+
+  const readerStore = createReaderStore(join(userDataPath, 'reader-store.json'), (event, payload) => {
+    void appendReaderDebugLog(`store:${event}`, payload)
+  })
+
+  void appendReaderDebugLog('app:ready', {
+    userDataPath,
+    readerStorePath: join(userDataPath, 'reader-store.json'),
+    readerDebugLogPath
+  })
 
   ipcMain.handle('dialog:pickMarkdownFile', async () => {
     if (!mainWindow) {
@@ -59,6 +87,10 @@ app.whenReady().then(() => {
     return fileText
   })
 
+  ipcMain.handle('file:writeMarkdownFile', async (_, filePath: string, content: string) => {
+    await writeFile(filePath, content, 'utf-8')
+  })
+
   ipcMain.handle('reader:loadPosition', async (_, filePath: string): Promise<ReaderPosition | null> => {
     return readerStore.loadPosition(filePath)
   })
@@ -81,6 +113,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('reader:saveLastOpenedSession', async (_, value: ReaderLastOpenedSession | null): Promise<void> => {
     await readerStore.saveLastOpenedSession(value)
+  })
+
+  ipcMain.handle('reader:debugLog', async (_, event: string, payload?: unknown): Promise<void> => {
+    await appendReaderDebugLog(`renderer:${event}`, payload)
   })
 
   createWindow()

@@ -20,6 +20,16 @@ export interface ReaderLastOpenedSession {
   sourceKey: string
   sourceLabel: string
   filePath?: string
+  tabs?: ReaderSessionTab[]
+  activeTabId?: string
+}
+
+export interface ReaderSessionTab {
+  id: string
+  sourceType: 'path' | 'cachedText'
+  sourceKey: string
+  sourceLabel: string
+  filePath?: string
 }
 
 export type ReaderThemeKey = 'day' | 'night' | 'eyeCare'
