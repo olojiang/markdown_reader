@@ -17,6 +17,7 @@ describe('getCompactReaderControlsState', () => {
       showsConfigPanel: false,
       showChapterPanel: false,
       showSettingsPanel: false,
+      showTopbar: true,
       showReadingControls: true,
       showRevealButton: false
     })
@@ -33,6 +34,7 @@ describe('getCompactReaderControlsState', () => {
     expect(state.isCompactReadingMode).toBe(false)
     expect(state.showsConfigPanel).toBe(true)
     expect(state.showSettingsPanel).toBe(true)
+    expect(state.showTopbar).toBe(true)
     expect(state.showReadingControls).toBe(false)
     expect(state.showRevealButton).toBe(false)
   })

@@ -110,6 +110,7 @@ const mdReaderCompactReadingMode = computed(() => mdReaderCompactControlsState.v
 const mdReaderShowsConfigPanel = computed(() => mdReaderCompactControlsState.value.showsConfigPanel)
 const mdReaderShowChapterPanel = computed(() => mdReaderCompactControlsState.value.showChapterPanel)
 const mdReaderShowSettingsPanel = computed(() => mdReaderCompactControlsState.value.showSettingsPanel)
+const mdReaderShowTopbar = computed(() => mdReaderCompactControlsState.value.showTopbar)
 const mdReaderActiveTab = computed(() => mdReaderTabs.value.find((tab) => tab.id === mdReaderActiveTabId.value) ?? null)
 const mdReaderHasOpenTabs = computed(() => mdReaderTabs.value.length > 0)
 const mdReaderUnsavedTabCount = computed(() => mdReaderTabs.value.filter((tab) => tab.isDirty).length)
@@ -1637,6 +1638,14 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 
     <div class="md-reader-workspace-shell" :class="{ 'md-reader-workspace-shell-reading-only': mdReaderCompactReadingMode }">
       <aside v-if="mdReaderShowsConfigPanel" class="md-reader-workspace-sidebar">
+        <button
+          v-if="mdReaderIsCompactLoadedMode && !mdReaderCompactReadingMode"
+          type="button"
+          class="md-reader-compact-panel-back-button"
+          @click="closeCompactPanel"
+        >
+          返回阅读
+        </button>
         <details v-if="mdReaderSearchPanelVisible" class="md-reader-sidebar-panel-details" open>
           <summary class="md-reader-sidebar-panel-summary">搜索</summary>
           <section class="md-reader-sidebar-panel-content-section" aria-label="搜索面板">
@@ -1710,7 +1719,7 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
       </aside>
 
       <main class="md-reader-workspace-main" aria-label="阅读区域">
-        <nav v-if="mdReaderShowReadingControls" class="md-reader-compact-topbar-nav" aria-label="移动端阅读控制">
+        <nav v-if="mdReaderShowTopbar" class="md-reader-compact-topbar-nav" aria-label="移动端阅读控制">
           <button
             type="button"
             class="md-reader-compact-topbar-button"
@@ -2124,6 +2133,25 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 
 .md-reader-sidebar-panel-content-section {
   padding: 6px 12px 12px;
+}
+
+.md-reader-compact-panel-back-button {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--md-stroke-strong);
+  border-radius: 10px;
+  background: rgba(255, 253, 247, 0.82);
+  color: var(--md-text-main);
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.md-reader-compact-panel-back-button:focus-visible {
+  outline: none;
+  box-shadow: var(--md-focus-ring);
 }
 
 .md-reader-compact-file-shell-section {

@@ -13,6 +13,7 @@ export interface CompactReaderControlsState {
   showsConfigPanel: boolean
   showChapterPanel: boolean
   showSettingsPanel: boolean
+  showTopbar: boolean
   showReadingControls: boolean
   showRevealButton: boolean
 }
@@ -27,6 +28,7 @@ export function getCompactReaderControlsState(input: CompactReaderControlsInput)
     showsConfigPanel: !isCompactReadingMode,
     showChapterPanel: !isCompactLoadedMode || input.activePanel === 'chapters',
     showSettingsPanel: !isCompactLoadedMode || input.activePanel === 'settings',
+    showTopbar: isCompactLoadedMode && (input.controlsVisible || input.activePanel !== null),
     showReadingControls: isCompactReadingMode && input.controlsVisible,
     showRevealButton: isCompactReadingMode && !input.controlsVisible
   }
