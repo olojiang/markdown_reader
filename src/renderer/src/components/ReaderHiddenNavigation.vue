@@ -18,7 +18,7 @@ const emit = defineEmits<{
   <nav class="md-reader-hidden-navigation" aria-label="隐藏模式阅读导航">
     <button
       type="button"
-      class="md-reader-hidden-navigation-button"
+      class="md-reader-hidden-navigation-button md-reader-hidden-navigation-button-translucent"
       data-testid="hidden-navigation-page-previous"
       aria-label="上一页"
       title="上一页"
@@ -29,7 +29,7 @@ const emit = defineEmits<{
     </button>
     <button
       type="button"
-      class="md-reader-hidden-navigation-button"
+      class="md-reader-hidden-navigation-button md-reader-hidden-navigation-button-translucent"
       data-testid="hidden-navigation-page-next"
       aria-label="下一页"
       title="下一页"
@@ -40,7 +40,7 @@ const emit = defineEmits<{
     </button>
     <button
       type="button"
-      class="md-reader-hidden-navigation-button"
+      class="md-reader-hidden-navigation-button md-reader-hidden-navigation-button-translucent"
       data-testid="hidden-navigation-chapter-previous"
       aria-label="上一章"
       title="上一章"
@@ -51,7 +51,7 @@ const emit = defineEmits<{
     </button>
     <button
       type="button"
-      class="md-reader-hidden-navigation-button"
+      class="md-reader-hidden-navigation-button md-reader-hidden-navigation-button-translucent"
       data-testid="hidden-navigation-chapter-next"
       aria-label="下一章"
       title="下一章"
@@ -82,23 +82,25 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(111, 86, 39, 0.42);
+  border: 1px solid rgba(111, 86, 39, 0.24);
   border-radius: 50%;
-  background: rgba(255, 249, 238, 0.56);
-  color: rgba(31, 27, 20, 0.78);
+  background: rgba(255, 249, 238, 0.28);
+  color: rgba(31, 27, 20, 0.58);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
   pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 4px 14px rgba(57, 45, 20, 0.14);
-  backdrop-filter: blur(8px);
+  opacity: 0.64;
+  box-shadow: 0 2px 8px rgba(57, 45, 20, 0.08);
+  backdrop-filter: blur(6px);
   transition: background 160ms ease, transform 160ms ease, opacity 160ms ease;
 }
 
 .md-reader-hidden-navigation-button:hover:not(:disabled) {
-  background: rgba(255, 249, 238, 0.82);
+  background: rgba(255, 249, 238, 0.46);
+  opacity: 0.82;
   transform: translateY(-1px);
 }
 
@@ -113,7 +115,7 @@ const emit = defineEmits<{
 
 .md-reader-hidden-navigation-button:disabled {
   cursor: not-allowed;
-  opacity: 0.28;
+  opacity: 0.2;
 }
 
 @media (max-width: 900px) {

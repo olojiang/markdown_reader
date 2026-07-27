@@ -16,6 +16,7 @@ describe('ReaderHiddenNavigation', () => {
 
     expect(wrapper.findAll('[data-testid^="hidden-navigation-"]')).toHaveLength(4)
     expect(wrapper.findAll('.md-reader-hidden-navigation-button')).toHaveLength(4)
+    expect(wrapper.findAll('.md-reader-hidden-navigation-button-translucent')).toHaveLength(4)
     expect(wrapper.get('[data-testid="hidden-navigation-page-previous"]').attributes('aria-label')).toBe('上一页')
     expect(wrapper.get('[data-testid="hidden-navigation-page-next"]').attributes('aria-label')).toBe('下一页')
     expect(wrapper.get('[data-testid="hidden-navigation-chapter-previous"]').attributes('aria-label')).toBe('上一章')

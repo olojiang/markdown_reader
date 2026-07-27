@@ -1759,6 +1759,8 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
           <button
             type="button"
             class="md-reader-reading-controls-reveal-button"
+            data-testid="md-reader-reading-controls-reveal"
+            data-shape="circle"
             aria-label="显示阅读控件"
             title="显示顶部和底部阅读控件"
             @click="mdReaderReadingControlsVisible = true"
@@ -2275,20 +2277,20 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
   position: relative;
   top: auto;
   right: auto;
-  min-width: 72px;
+  min-width: 32px;
   min-height: 32px;
   width: 32px;
   height: 32px;
   margin-left: 8px;
   padding: 0;
-  border: 1px solid rgba(111, 86, 39, 0.26);
+  border: 1px solid rgba(111, 86, 39, 0.2);
   border-radius: 50%;
-  background: rgba(255, 249, 238, 0.34);
-  color: rgba(31, 27, 20, 0.58);
-  font-size: 16px;
+  background: rgba(255, 249, 238, 0.22);
+  color: rgba(31, 27, 20, 0.5);
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  opacity: 0.56;
+  opacity: 0.44;
   pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
