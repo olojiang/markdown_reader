@@ -17,6 +17,7 @@ import type {
 } from '@shared/reader-types'
 
 import ChapterList from './components/ChapterList.vue'
+import ReaderHiddenNavigation from './components/ReaderHiddenNavigation.vue'
 import ReaderArticle from './components/ReaderArticle.vue'
 import ReaderNavigationControls from './components/ReaderNavigationControls.vue'
 import ReaderSettings from './components/ReaderSettings.vue'
@@ -127,6 +128,7 @@ const mdReaderChapterProgressText = computed(() => {
 })
 const mdReaderShowReadingControls = computed(() => mdReaderCompactControlsState.value.showReadingControls)
 const mdReaderShowReadingControlsReveal = computed(() => mdReaderCompactControlsState.value.showRevealButton)
+const mdReaderShowHiddenNavigation = computed(() => mdReaderCompactControlsState.value.showHiddenNavigation)
 
 const mdReaderSearchOpenTabs = computed((): OpenTabInfo[] =>
   mdReaderTabs.value.map((tab) => ({
@@ -1752,16 +1754,30 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
           </button>
         </nav>
 
-        <button
-          v-if="mdReaderShowReadingControlsReveal"
-          type="button"
-          class="md-reader-reading-controls-reveal-button"
-          aria-label="显示阅读控件"
-          title="显示顶部和底部阅读控件"
-          @click="mdReaderReadingControlsVisible = true"
-        >
-          显示控件
-        </button>
+        <div v-if="mdReaderShowReadingControlsReveal" class="md-reader-hidden-reading-topbar" aria-label="隐藏模式阅读标题">
+          <p class="md-reader-hidden-reading-title">{{ mdReaderCurrentChapterTitle }}</p>
+          <button
+            type="button"
+            class="md-reader-reading-controls-reveal-button"
+            aria-label="显示阅读控件"
+            title="显示顶部和底部阅读控件"
+            @click="mdReaderReadingControlsVisible = true"
+          >
+            <span aria-hidden="true">⌃</span>
+          </button>
+        </div>
+
+        <ReaderHiddenNavigation
+          v-if="mdReaderShowHiddenNavigation"
+          :can-scroll-previous="mdReaderCanScrollPrevious"
+          :can-scroll-next="mdReaderCanScrollNext"
+          :has-previous-chapter="mdReaderHasPreviousChapter"
+          :has-next-chapter="mdReaderHasNextChapter"
+          @previous-page="goToPreviousPage"
+          @next-page="goToNextPage"
+          @previous-chapter="goToPreviousChapter"
+          @next-chapter="goToNextChapter"
+        />
 
         <section class="md-reader-workspace-article-section">
           <ReaderArticle
@@ -1844,7 +1860,8 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 }
 
 .md-reader-app-root-compact-controls-hidden .md-reader-workspace-article-section :deep(.md-reader-article-body-article) {
-  padding-bottom: var(--md-reader-content-padding);
+  padding-top: calc(var(--md-reader-content-padding) + 34px);
+  padding-bottom: calc(var(--md-reader-content-padding) + 116px);
 }
 
 .md-reader-header-section {
@@ -2224,31 +2241,67 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
   font-size: 12px;
 }
 
-.md-reader-reading-controls-reveal-button {
+.md-reader-hidden-reading-topbar {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: 8px;
+  left: 10px;
+  right: 10px;
   z-index: 11;
-  min-width: 72px;
-  min-height: 40px;
-  padding: 0 10px;
-  border: 1px solid rgba(111, 86, 39, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.md-reader-hidden-reading-title {
+  max-width: calc(100% - 48px);
+  margin: 0;
+  padding: 4px 10px;
+  overflow: hidden;
+  border: 1px solid rgba(111, 86, 39, 0.22);
   border-radius: 999px;
-  background: rgba(255, 249, 238, 0.72);
-  color: rgba(31, 27, 20, 0.74);
-  font-size: 13px;
+  background: rgba(255, 249, 238, 0.4);
+  color: rgba(31, 27, 20, 0.68);
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(57, 45, 20, 0.08);
+  backdrop-filter: blur(6px);
+}
+
+.md-reader-reading-controls-reveal-button {
+  position: relative;
+  top: auto;
+  right: auto;
+  min-width: 72px;
+  min-height: 32px;
+  width: 32px;
+  height: 32px;
+  margin-left: 8px;
+  padding: 0;
+  border: 1px solid rgba(111, 86, 39, 0.26);
+  border-radius: 50%;
+  background: rgba(255, 249, 238, 0.34);
+  color: rgba(31, 27, 20, 0.58);
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
+  opacity: 0.56;
+  pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 
 .md-reader-reading-controls-reveal-button:active {
-  background: rgba(255, 249, 238, 0.58);
+  background: rgba(255, 249, 238, 0.52);
+  opacity: 0.82;
 }
 
 .md-reader-reading-controls-reveal-button:focus-visible {
   outline: none;
+  opacity: 0.9;
   box-shadow: var(--md-focus-ring);
 }
 

@@ -19,7 +19,8 @@ describe('getCompactReaderControlsState', () => {
       showSettingsPanel: false,
       showTopbar: true,
       showReadingControls: true,
-      showRevealButton: false
+      showRevealButton: false,
+      showHiddenNavigation: false
     })
   })
 
@@ -37,6 +38,7 @@ describe('getCompactReaderControlsState', () => {
     expect(state.showTopbar).toBe(true)
     expect(state.showReadingControls).toBe(false)
     expect(state.showRevealButton).toBe(false)
+    expect(state.showHiddenNavigation).toBe(false)
   })
 
   it('keeps a readable recovery button after reading controls are hidden', () => {
@@ -49,6 +51,7 @@ describe('getCompactReaderControlsState', () => {
 
     expect(state.showReadingControls).toBe(false)
     expect(state.showRevealButton).toBe(true)
+    expect(state.showHiddenNavigation).toBe(true)
   })
 
   it('keeps the full configuration layout when compact mode is unavailable', () => {
@@ -65,5 +68,6 @@ describe('getCompactReaderControlsState', () => {
     expect(state.showSettingsPanel).toBe(true)
     expect(state.showReadingControls).toBe(false)
     expect(state.showRevealButton).toBe(false)
+    expect(state.showHiddenNavigation).toBe(false)
   })
 })
