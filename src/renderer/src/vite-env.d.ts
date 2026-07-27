@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '@shared/reader-types'
+import type { FileSearchResult, FolderSearchRequest } from '@shared/search-types'
 
 declare global {
   interface Window {
@@ -15,6 +16,7 @@ declare global {
       loadLastOpenedSession: () => Promise<ReaderLastOpenedSession | null>
       saveLastOpenedSession: (value: ReaderLastOpenedSession | null) => Promise<void>
       writeReaderDebugLog: (event: string, payload?: unknown) => Promise<void>
+      searchInFolder: (request: FolderSearchRequest) => Promise<FileSearchResult>
     }
   }
 }

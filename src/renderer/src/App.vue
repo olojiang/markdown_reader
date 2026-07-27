@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 
@@ -18,7 +18,12 @@ import type {
 
 import ChapterList from './components/ChapterList.vue'
 import ReaderArticle from './components/ReaderArticle.vue'
+import ReaderNavigationControls from './components/ReaderNavigationControls.vue'
 import ReaderSettings from './components/ReaderSettings.vue'
+import SearchPanel from './components/SearchPanel.vue'
+import type { OpenTabInfo, SearchNavigatePayload } from './components/SearchPanel.vue'
+import { findChapterIndexAtLine } from '@shared/text-search'
+import { getCompactReaderControlsState, type CompactReaderPanel } from './reader-controls-state'
 
 const sampleFilePath =
   '/Users/hunter/Downloads/toutiao/books/倚天：重生张无忌，多情公子-7379149479284329496.decoded.md'
@@ -55,7 +60,11 @@ interface ReaderOpenTab extends ReaderSessionTab {
   isDirty: boolean
 }
 
-type MdReaderCompactPanel = 'chapters' | 'settings' | null
+interface ReaderScrollState {
+  scrollTop: number
+  canScrollPrevious: boolean
+  canScrollNext: boolean
+}
 
 const mdReaderPathInputModel = ref(sampleFilePath)
 const mdReaderTabs = ref<ReaderOpenTab[]>([])
@@ -70,25 +79,37 @@ const mdReaderPreference = ref<ReaderPreference>({ ...DEFAULT_READER_PREFERENCE 
 const mdReaderStatusText = ref('请选择 Markdown 文件，或在桌面端输入路径打开。')
 const mdReaderIsLoading = ref(false)
 const mdReaderIsCompactLayout = ref(false)
-const mdReaderCompactPanel = ref<MdReaderCompactPanel>(null)
+const mdReaderCompactPanel = ref<CompactReaderPanel>(null)
+const mdReaderReadingControlsVisible = ref(true)
 const mdReaderWebFileInputRef = ref<HTMLInputElement | null>(null)
+const mdReaderSearchPanelVisible = ref(false)
+const mdReaderSearchPanelRef = ref<InstanceType<typeof SearchPanel> | null>(null)
+const mdReaderArticleRef = ref<InstanceType<typeof ReaderArticle> | null>(null)
 const mdReaderSupportsPathOpen = computed(() => Boolean(window.electronAPI))
 
 const mdReaderChapterItems = computed(() => mdReaderParsedDocument.value?.chapters ?? [])
 const mdReaderCurrentChapter = computed(() => mdReaderChapterItems.value[mdReaderActiveChapterIndex.value] ?? null)
 const mdReaderHasPreviousChapter = computed(() => mdReaderActiveChapterIndex.value > 0)
-const mdReaderHasNextChapter = computed(() => mdReaderActiveChapterIndex.value < mdReaderChapterItems.value.length - 1)
+const mdReaderHasNextChapter = computed(
+  () => mdReaderActiveChapterIndex.value < mdReaderChapterItems.value.length - 1
+)
+const mdReaderCanScrollPrevious = ref(false)
+const mdReaderCanScrollNext = ref(false)
 const mdReaderHasLoadedDocument = computed(() => mdReaderParsedDocument.value !== null)
-const mdReaderIsCompactLoadedMode = computed(() => mdReaderIsCompactLayout.value && mdReaderHasLoadedDocument.value)
+const mdReaderCompactControlsState = computed(() =>
+  getCompactReaderControlsState({
+    compactLayout: mdReaderIsCompactLayout.value,
+    hasDocument: mdReaderHasLoadedDocument.value,
+    activePanel: mdReaderCompactPanel.value,
+    controlsVisible: mdReaderReadingControlsVisible.value
+  })
+)
+const mdReaderIsCompactLoadedMode = computed(() => mdReaderCompactControlsState.value.isCompactLoadedMode)
 const mdReaderCurrentChapterTitle = computed(() => mdReaderCurrentChapter.value?.title?.trim() || '未选择章节')
-const mdReaderCompactReadingMode = computed(
-  () => mdReaderIsCompactLoadedMode.value && mdReaderCompactPanel.value === null
-)
-const mdReaderShowsConfigPanel = computed(
-  () => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value !== null
-)
-const mdReaderShowChapterPanel = computed(() => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value === 'chapters')
-const mdReaderShowSettingsPanel = computed(() => !mdReaderIsCompactLoadedMode.value || mdReaderCompactPanel.value === 'settings')
+const mdReaderCompactReadingMode = computed(() => mdReaderCompactControlsState.value.isCompactReadingMode)
+const mdReaderShowsConfigPanel = computed(() => mdReaderCompactControlsState.value.showsConfigPanel)
+const mdReaderShowChapterPanel = computed(() => mdReaderCompactControlsState.value.showChapterPanel)
+const mdReaderShowSettingsPanel = computed(() => mdReaderCompactControlsState.value.showSettingsPanel)
 const mdReaderActiveTab = computed(() => mdReaderTabs.value.find((tab) => tab.id === mdReaderActiveTabId.value) ?? null)
 const mdReaderHasOpenTabs = computed(() => mdReaderTabs.value.length > 0)
 const mdReaderUnsavedTabCount = computed(() => mdReaderTabs.value.filter((tab) => tab.isDirty).length)
@@ -103,9 +124,20 @@ const mdReaderChapterProgressText = computed(() => {
 
   return `第 ${mdReaderActiveChapterIndex.value + 1} / ${mdReaderChapterItems.value.length} 章`
 })
-const mdReaderPrevButtonText = computed(() => (mdReaderIsCompactLayout.value ? '上一章' : '上一章（Ctrl+←）'))
-const mdReaderNextButtonText = computed(() => (mdReaderIsCompactLayout.value ? '下一章' : '下一章（Ctrl+→）'))
-const mdReaderShowFloatingPanelButtons = computed(() => mdReaderIsCompactLoadedMode.value)
+const mdReaderShowReadingControls = computed(() => mdReaderCompactControlsState.value.showReadingControls)
+const mdReaderShowReadingControlsReveal = computed(() => mdReaderCompactControlsState.value.showRevealButton)
+
+const mdReaderSearchOpenTabs = computed((): OpenTabInfo[] =>
+  mdReaderTabs.value.map((tab) => ({
+    id: tab.id,
+    sourceKey: tab.sourceKey,
+    sourceLabel: tab.sourceLabel,
+    filePath: tab.filePath,
+    markdownText: tab.markdownText
+  }))
+)
+
+const mdReaderActiveTabFilePath = computed(() => mdReaderActiveTab.value?.filePath)
 
 let savePositionTimer: number | null = null
 let compactLayoutMediaQuery: MediaQueryList | null = null
@@ -177,7 +209,7 @@ function closeCompactPanel(): void {
   mdReaderCompactPanel.value = null
 }
 
-function toggleCompactPanel(panel: Exclude<MdReaderCompactPanel, null>): void {
+function toggleCompactPanel(panel: Exclude<CompactReaderPanel, null>): void {
   if (!mdReaderIsCompactLoadedMode.value) {
     return
   }
@@ -766,6 +798,8 @@ function clearCurrentReaderDocument(): void {
   mdReaderParsedDocument.value = null
   mdReaderRawMarkdown.value = ''
   mdReaderActiveChapterIndex.value = 0
+  mdReaderCanScrollPrevious.value = false
+  mdReaderCanScrollNext.value = false
   mdReaderRestoredScrollTop.value = 0
   mdReaderLatestScrollTop.value = 0
   mdReaderStatusText.value = '请选择 Markdown 文件，或在桌面端输入路径打开。'
@@ -799,6 +833,8 @@ async function handleChapterSwitch(index: number): Promise<void> {
 
   const safeIndex = clampNumber(index, 0, mdReaderChapterItems.value.length - 1)
   mdReaderActiveChapterIndex.value = safeIndex
+  mdReaderCanScrollPrevious.value = false
+  mdReaderCanScrollNext.value = false
   mdReaderRestoredScrollTop.value = 0
   mdReaderLatestScrollTop.value = 0
 
@@ -807,6 +843,14 @@ async function handleChapterSwitch(index: number): Promise<void> {
   if (mdReaderIsCompactLayout.value) {
     closeCompactPanel()
   }
+}
+
+function goToPreviousPage(): void {
+  mdReaderArticleRef.value?.scrollByPage(-1)
+}
+
+function goToNextPage(): void {
+  mdReaderArticleRef.value?.scrollByPage(1)
 }
 
 async function goToPreviousChapter(): Promise<void> {
@@ -825,8 +869,10 @@ async function goToNextChapter(): Promise<void> {
   await handleChapterSwitch(mdReaderActiveChapterIndex.value + 1)
 }
 
-function handleReaderScrollChange(scrollTop: number): void {
-  mdReaderLatestScrollTop.value = Math.max(scrollTop, 0)
+function handleReaderScrollChange(state: ReaderScrollState): void {
+  mdReaderLatestScrollTop.value = Math.max(state.scrollTop, 0)
+  mdReaderCanScrollPrevious.value = state.canScrollPrevious
+  mdReaderCanScrollNext.value = state.canScrollNext
 
   if (savePositionTimer !== null) {
     window.clearTimeout(savePositionTimer)
@@ -1346,23 +1392,43 @@ function safeLocalStorageRemove(key: string): void {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
-  if (!event.ctrlKey) {
-    return
-  }
-
   if (isEditableTarget(event.target)) {
     return
   }
 
-  if (event.key === 'ArrowLeft') {
+  if (event.ctrlKey && event.key === 'ArrowLeft') {
     event.preventDefault()
     void goToPreviousChapter()
     return
   }
 
-  if (event.key === 'ArrowRight') {
+  if (event.ctrlKey && event.key === 'ArrowRight') {
     event.preventDefault()
     void goToNextChapter()
+    return
+  }
+
+  if (event.ctrlKey && event.key === 'ArrowUp') {
+    event.preventDefault()
+    goToPreviousPage()
+    return
+  }
+
+  if (event.ctrlKey && event.key === 'ArrowDown') {
+    event.preventDefault()
+    goToNextPage()
+    return
+  }
+
+  if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === ' ' || event.code === 'Space')) {
+    event.preventDefault()
+    goToNextPage()
+    return
+  }
+
+  if (event.ctrlKey && event.shiftKey && (event.key === 'f' || event.key === 'F')) {
+    event.preventDefault()
+    toggleSearchPanel()
   }
 }
 
@@ -1402,6 +1468,73 @@ function isReaderThemeKey(value: string): value is ReaderThemeKey {
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
+
+function toggleSearchPanel(): void {
+  mdReaderSearchPanelVisible.value = !mdReaderSearchPanelVisible.value
+  if (mdReaderSearchPanelVisible.value) {
+    void nextTick(() => {
+      mdReaderSearchPanelRef.value?.focusSearchInput()
+    })
+  }
+}
+
+function closeSearchPanel(): void {
+  mdReaderSearchPanelVisible.value = false
+}
+
+async function handleSearchNavigate(payload: SearchNavigatePayload): Promise<void> {
+  writeReaderDebugLog('search:navigate', {
+    filePath: payload.filePath,
+    lineNumber: payload.lineNumber,
+    column: payload.column,
+    tabId: payload.tabId ?? null
+  })
+
+  if (payload.tabId) {
+    const tab = mdReaderTabs.value.find((t) => t.id === payload.tabId)
+    if (tab) {
+      await activateReaderTab(tab.id)
+      navigateToLineInCurrentDocument(tab.markdownText, payload.lineNumber)
+      return
+    }
+  }
+
+  const tabByPath = mdReaderTabs.value.find(
+    (t) => t.filePath === payload.filePath || t.sourceKey === payload.filePath
+  )
+  if (tabByPath) {
+    await activateReaderTab(tabByPath.id)
+    navigateToLineInCurrentDocument(tabByPath.markdownText, payload.lineNumber)
+    return
+  }
+
+  if (mdReaderSupportsPathOpen.value) {
+    try {
+      await loadMarkdownFile(payload.filePath)
+      const newTab = mdReaderTabs.value.find((t) => t.filePath === payload.filePath)
+      if (newTab) {
+        navigateToLineInCurrentDocument(newTab.markdownText, payload.lineNumber)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      mdReaderStatusText.value = `打开搜索结果文件失败：${message}`
+    }
+  }
+}
+
+function navigateToLineInCurrentDocument(markdownText: string, lineNumber: number): void {
+  const chapters = mdReaderParsedDocument.value?.chapters
+  if (!chapters || chapters.length === 0) {
+    return
+  }
+
+  const chapterTexts = chapters.map((c) => c.markdown)
+  const targetChapterIndex = findChapterIndexAtLine(chapterTexts, lineNumber)
+
+  if (targetChapterIndex !== mdReaderActiveChapterIndex.value) {
+    void handleChapterSwitch(targetChapterIndex)
+  }
+}
 </script>
 
 <template>
@@ -1409,7 +1542,8 @@ function clampNumber(value: number, min: number, max: number): number {
     class="md-reader-app-root"
     :class="{
       'md-reader-app-root-compact': mdReaderIsCompactLoadedMode,
-      'md-reader-app-root-compact-reading': mdReaderCompactReadingMode
+      'md-reader-app-root-compact-reading': mdReaderCompactReadingMode,
+      'md-reader-app-root-compact-controls-hidden': mdReaderCompactReadingMode && !mdReaderReadingControlsVisible
     }"
   >
     <header class="md-reader-header-section">
@@ -1484,6 +1618,17 @@ function clampNumber(value: number, min: number, max: number): number {
         </section>
       </details>
 
+      <div class="md-reader-header-action-row">
+        <button
+          type="button"
+          class="md-reader-open-form-dialog-button"
+          :aria-pressed="mdReaderSearchPanelVisible"
+          @click="toggleSearchPanel"
+        >
+          搜索（Ctrl+Shift+F）
+        </button>
+      </div>
+
       <p class="md-reader-open-status-text" role="status">{{ mdReaderStatusText }}</p>
       <p v-if="mdReaderUnsavedTabCount > 0" class="md-reader-unsaved-status-text">
         {{ mdReaderUnsavedTabCount }} 个标签页未保存
@@ -1492,6 +1637,20 @@ function clampNumber(value: number, min: number, max: number): number {
 
     <div class="md-reader-workspace-shell" :class="{ 'md-reader-workspace-shell-reading-only': mdReaderCompactReadingMode }">
       <aside v-if="mdReaderShowsConfigPanel" class="md-reader-workspace-sidebar">
+        <details v-if="mdReaderSearchPanelVisible" class="md-reader-sidebar-panel-details" open>
+          <summary class="md-reader-sidebar-panel-summary">搜索</summary>
+          <section class="md-reader-sidebar-panel-content-section" aria-label="搜索面板">
+            <SearchPanel
+              ref="mdReaderSearchPanelRef"
+              :open-tabs="mdReaderSearchOpenTabs"
+              :active-tab-file-path="mdReaderActiveTabFilePath"
+              :supports-path-open="mdReaderSupportsPathOpen"
+              @navigate="handleSearchNavigate"
+              @close="closeSearchPanel"
+            />
+          </section>
+        </details>
+
         <details v-if="mdReaderShowChapterPanel" class="md-reader-sidebar-panel-details" open>
           <summary class="md-reader-sidebar-panel-summary">目录</summary>
           <section class="md-reader-sidebar-panel-content-section" aria-label="目录面板">
@@ -1551,7 +1710,7 @@ function clampNumber(value: number, min: number, max: number): number {
       </aside>
 
       <main class="md-reader-workspace-main" aria-label="阅读区域">
-        <nav v-if="mdReaderShowFloatingPanelButtons" class="md-reader-compact-topbar-nav" aria-label="移动端面板切换">
+        <nav v-if="mdReaderShowReadingControls" class="md-reader-compact-topbar-nav" aria-label="移动端阅读控制">
           <button
             type="button"
             class="md-reader-compact-topbar-button"
@@ -1560,7 +1719,7 @@ function clampNumber(value: number, min: number, max: number): number {
             title="阅读设置"
             @click="toggleCompactPanel('settings')"
           >
-            ⚙
+            设置
           </button>
           <p class="md-reader-compact-topbar-title">{{ mdReaderCurrentChapterTitle }}</p>
           <button
@@ -1571,12 +1730,33 @@ function clampNumber(value: number, min: number, max: number): number {
             title="章节目录"
             @click="toggleCompactPanel('chapters')"
           >
-            ☰
+            目录
+          </button>
+          <button
+            type="button"
+            class="md-reader-compact-topbar-button md-reader-reading-controls-hide-button"
+            aria-label="隐藏阅读控件"
+            title="隐藏顶部和底部阅读控件"
+            @click="mdReaderReadingControlsVisible = false"
+          >
+            隐藏
           </button>
         </nav>
 
+        <button
+          v-if="mdReaderShowReadingControlsReveal"
+          type="button"
+          class="md-reader-reading-controls-reveal-button"
+          aria-label="显示阅读控件"
+          title="显示顶部和底部阅读控件"
+          @click="mdReaderReadingControlsVisible = true"
+        >
+          显示控件
+        </button>
+
         <section class="md-reader-workspace-article-section">
           <ReaderArticle
+            ref="mdReaderArticleRef"
             :chapter="mdReaderCurrentChapter"
             :preference="mdReaderPreference"
             :hide-title="mdReaderIsCompactLoadedMode"
@@ -1585,17 +1765,19 @@ function clampNumber(value: number, min: number, max: number): number {
           />
         </section>
 
-        <footer class="md-reader-workspace-navigation-footer">
-          <nav class="md-reader-workspace-navigation-nav" aria-label="章节切换">
-            <button type="button" class="md-reader-workspace-navigation-button" :disabled="!mdReaderHasPreviousChapter" @click="goToPreviousChapter">
-              {{ mdReaderPrevButtonText }}
-            </button>
-            <p class="md-reader-workspace-navigation-progress">{{ mdReaderChapterProgressText }}</p>
-            <button type="button" class="md-reader-workspace-navigation-button" :disabled="!mdReaderHasNextChapter" @click="goToNextChapter">
-              {{ mdReaderNextButtonText }}
-            </button>
-          </nav>
-        </footer>
+        <ReaderNavigationControls
+          v-if="!mdReaderIsCompactLoadedMode || (mdReaderCompactReadingMode && mdReaderShowReadingControls)"
+          :compact="mdReaderIsCompactLayout"
+          :can-scroll-previous="mdReaderCanScrollPrevious"
+          :can-scroll-next="mdReaderCanScrollNext"
+          :has-previous-chapter="mdReaderHasPreviousChapter"
+          :has-next-chapter="mdReaderHasNextChapter"
+          :chapter-progress-text="mdReaderChapterProgressText"
+          @previous-page="goToPreviousPage"
+          @next-page="goToNextPage"
+          @previous-chapter="goToPreviousChapter"
+          @next-chapter="goToNextChapter"
+        />
       </main>
     </div>
   </div>
@@ -1650,6 +1832,10 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-app-root-compact-reading .md-reader-workspace-shell-reading-only {
   grid-template-rows: minmax(0, 1fr);
+}
+
+.md-reader-app-root-compact-controls-hidden .md-reader-workspace-article-section :deep(.md-reader-article-body-article) {
+  padding-bottom: var(--md-reader-content-padding);
 }
 
 .md-reader-header-section {
@@ -1800,7 +1986,6 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button,
 .md-reader-open-form-dialog-button,
 .md-reader-open-form-save-button,
-.md-reader-workspace-navigation-button,
 .md-reader-compact-topbar-button {
   min-height: 40px;
   padding: 0 16px;
@@ -1817,7 +2002,6 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button:hover,
 .md-reader-open-form-dialog-button:hover,
 .md-reader-open-form-save-button:hover,
-.md-reader-workspace-navigation-button:hover,
 .md-reader-compact-topbar-button:hover {
   filter: brightness(1.01);
   transform: translateY(-1px);
@@ -1827,7 +2011,6 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button:active,
 .md-reader-open-form-dialog-button:active,
 .md-reader-open-form-save-button:active,
-.md-reader-workspace-navigation-button:active,
 .md-reader-compact-topbar-button:active {
   transform: translateY(0);
 }
@@ -1835,7 +2018,6 @@ function clampNumber(value: number, min: number, max: number): number {
 .md-reader-open-form-submit-button:focus-visible,
 .md-reader-open-form-dialog-button:focus-visible,
 .md-reader-open-form-save-button:focus-visible,
-.md-reader-workspace-navigation-button:focus-visible,
 .md-reader-compact-topbar-button:focus-visible,
 .md-reader-open-form-path-input:focus-visible {
   outline: none;
@@ -1844,8 +2026,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-open-form-submit-button:disabled,
 .md-reader-open-form-dialog-button:disabled,
-.md-reader-open-form-save-button:disabled,
-.md-reader-workspace-navigation-button:disabled {
+.md-reader-open-form-save-button:disabled {
   cursor: not-allowed;
   opacity: 0.56;
 }
@@ -1862,6 +2043,12 @@ function clampNumber(value: number, min: number, max: number): number {
   font-size: 13px;
   font-weight: 700;
   color: #8a4a13;
+}
+
+.md-reader-header-action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .md-reader-fix-chapter-section {
@@ -1956,6 +2143,7 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 .md-reader-workspace-main {
+  position: relative;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -1964,7 +2152,7 @@ function clampNumber(value: number, min: number, max: number): number {
 
 .md-reader-compact-topbar-nav {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   padding: 8px;
@@ -1986,13 +2174,14 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 .md-reader-compact-topbar-button {
-  width: 42px;
-  min-height: 42px;
-  padding: 0;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 13px;
+  white-space: nowrap;
   line-height: 1;
 }
 
@@ -2001,35 +2190,46 @@ function clampNumber(value: number, min: number, max: number): number {
   background: linear-gradient(180deg, #f3e0b3 0%, #e8cc8f 100%);
 }
 
+.md-reader-reading-controls-hide-button {
+  min-width: 52px;
+  color: var(--md-text-subtle);
+  font-size: 12px;
+}
+
+.md-reader-reading-controls-reveal-button {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 11;
+  min-width: 72px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid rgba(111, 86, 39, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 249, 238, 0.72);
+  color: rgba(31, 27, 20, 0.74);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.md-reader-reading-controls-reveal-button:active {
+  background: rgba(255, 249, 238, 0.58);
+}
+
+.md-reader-reading-controls-reveal-button:focus-visible {
+  outline: none;
+  box-shadow: var(--md-focus-ring);
+}
+
 .md-reader-workspace-article-section {
   min-height: 0;
 }
 
-.md-reader-workspace-navigation-footer {
-  border: 1px solid var(--md-stroke);
-  border-radius: 12px;
-  background: var(--md-surface-2);
-  padding: 10px;
-  box-shadow: var(--md-shadow-soft);
-  flex-shrink: 0;
-  height: 35px;
-}
-
-.md-reader-workspace-navigation-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.md-reader-workspace-navigation-progress {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--md-accent);
-  padding: 8px 10px;
-  border-radius: 999px;
-  background: var(--md-accent-weak);
+.md-reader-workspace-article-section :deep(.md-reader-article-body-article) {
+  padding-bottom: calc(var(--md-reader-content-padding) + 112px);
 }
 
 @media (max-width: 900px) {
@@ -2063,30 +2263,6 @@ function clampNumber(value: number, min: number, max: number): number {
     flex-direction: column;
   }
 
-  .md-reader-workspace-navigation-nav {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .md-reader-workspace-navigation-button {
-    width: 100%;
-    min-height: 44px;
-  }
-
-  .md-reader-workspace-navigation-progress {
-    text-align: center;
-    white-space: nowrap;
-  }
-
-  .md-reader-workspace-navigation-footer {
-    position: sticky;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
-    z-index: 9;
-    backdrop-filter: blur(4px);
-  }
-
   .md-reader-compact-topbar-nav {
     gap: 8px;
     padding: 8px;
@@ -2097,9 +2273,10 @@ function clampNumber(value: number, min: number, max: number): number {
   }
 
   .md-reader-compact-topbar-button {
-    width: 40px;
-    min-height: 40px;
-    font-size: 19px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 8px;
+    font-size: 13px;
   }
 }
 
@@ -2107,7 +2284,6 @@ function clampNumber(value: number, min: number, max: number): number {
   .md-reader-open-form-submit-button,
   .md-reader-open-form-dialog-button,
   .md-reader-open-form-save-button,
-  .md-reader-workspace-navigation-button,
   .md-reader-compact-topbar-button {
     transition: none;
   }

@@ -18,8 +18,14 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  scrollChange: [scrollTop: number]
+  scrollChange: [state: ReaderScrollState]
 }>()
+
+interface ReaderScrollState {
+  scrollTop: number
+  canScrollPrevious: boolean
+  canScrollNext: boolean
+}
 
 const mdParser = new MarkdownIt({
   html: false,
@@ -55,9 +61,40 @@ const mdReaderArticleStyle = computed(() => ({
 }))
 
 function handleReaderScroll(event: Event): void {
-  const target = event.target as HTMLElement
-  const scrollTop = target?.scrollTop ?? 0
-  emit('scrollChange', scrollTop)
+  const target = event.target as HTMLElement | null
+  emitReaderScrollState(target)
+}
+
+function emitReaderScrollState(target: HTMLElement | null = mdReaderArticleBodyRef.value): void {
+  if (!target) {
+    return
+  }
+
+  const maxScrollTop = Math.max(target.scrollHeight - target.clientHeight, 0)
+  emit('scrollChange', {
+    scrollTop: Math.max(target.scrollTop, 0),
+    canScrollPrevious: target.scrollTop > 0,
+    canScrollNext: target.scrollTop < maxScrollTop
+  })
+}
+
+function scrollByPage(direction: -1 | 1): void {
+  const target = mdReaderArticleBodyRef.value
+  if (!target || target.clientHeight <= 0) {
+    return
+  }
+
+  const maxScrollTop = Math.max(target.scrollHeight - target.clientHeight, 0)
+  const nextScrollTop = Math.min(
+    Math.max(target.scrollTop + direction * target.clientHeight, 0),
+    maxScrollTop
+  )
+
+  if (typeof target.scrollTo === 'function') {
+    target.scrollTo({ top: nextScrollTop, behavior: 'smooth' })
+  } else {
+    target.scrollTop = nextScrollTop
+  }
 }
 
 async function syncReaderScroll(): Promise<void> {
@@ -65,6 +102,7 @@ async function syncReaderScroll(): Promise<void> {
   const top = Math.max(props.initialScrollTop, 0)
   if (!mdReaderArticleBodyRef.value) return
   mdReaderArticleBodyRef.value.scrollTop = top
+  emitReaderScrollState()
 }
 
 watch(
@@ -78,6 +116,8 @@ watch(
 onMounted(() => {
   void syncReaderScroll()
 })
+
+defineExpose({ scrollByPage })
 </script>
 
 <template>

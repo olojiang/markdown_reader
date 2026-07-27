@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { ChapterItem, ReaderPreference } from '@shared/reader-types'
 import ReaderArticle from './ReaderArticle.vue'
@@ -63,5 +63,33 @@ describe('ReaderArticle', () => {
     expect(styleAttr).toContain('--md-reader-content-padding: 14px')
     expect(styleAttr).toContain('--md-reader-font-color: #111111')
     expect(styleAttr).toContain('--md-reader-background-color: #faf3dd')
+  })
+
+  it('scrolls exactly one visible screen when changing pages', async () => {
+    const wrapper = mount(ReaderArticle, {
+      props: {
+        chapter: chapterA,
+        preference
+      }
+    })
+    const article = wrapper.get('[data-testid="md-reader-article-content"]').element as HTMLElement
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      article.scrollTop = top ?? 0
+    })
+
+    Object.defineProperties(article, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 350 },
+      scrollTo: { configurable: true, value: scrollTo }
+    })
+
+    wrapper.vm.scrollByPage(1)
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: 'smooth' })
+
+    wrapper.vm.scrollByPage(1)
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 200, behavior: 'smooth' })
+
+    wrapper.vm.scrollByPage(-1)
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: 'smooth' })
   })
 })

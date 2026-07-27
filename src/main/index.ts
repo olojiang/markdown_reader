@@ -1,13 +1,36 @@
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 
 import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '../shared/reader-types'
+import type { FolderSearchRequest } from '../shared/search-types'
 
+import { searchInFolder } from './file-search'
+import { createReaderLogger, type ReaderLogger } from './reader-logger'
 import { createReaderStore } from './reader-store'
 
 let mainWindow: BrowserWindow | null = null
+let readerLogger: ReaderLogger | null = null
+let isQuitting = false
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) {
+      return
+    }
+
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore()
+    }
+    mainWindow.show()
+    mainWindow.focus()
+  })
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -23,6 +46,10 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
+  mainWindow.maximize()
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -31,25 +58,13 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+if (hasSingleInstanceLock) {
+  app.whenReady().then(() => {
   const userDataPath = app.getPath('userData')
-  const readerDebugLogPath = join(userDataPath, 'reader-debug.jsonl')
+  const readerLogDirectory = app.getPath('logs')
+  readerLogger = createReaderLogger(readerLogDirectory)
   const appendReaderDebugLog = async (event: string, payload?: unknown): Promise<void> => {
-    try {
-      await mkdir(userDataPath, { recursive: true })
-      await appendFile(
-        readerDebugLogPath,
-        JSON.stringify({
-          timestamp: new Date().toISOString(),
-          pid: process.pid,
-          event,
-          payload: payload ?? null
-        }) + '\n',
-        'utf-8'
-      )
-    } catch (error) {
-      console.warn('Failed to write reader debug log', error)
-    }
+    await readerLogger?.log(event, payload)
   }
 
   const readerStore = createReaderStore(join(userDataPath, 'reader-store.json'), (event, payload) => {
@@ -59,7 +74,7 @@ app.whenReady().then(() => {
   void appendReaderDebugLog('app:ready', {
     userDataPath,
     readerStorePath: join(userDataPath, 'reader-store.json'),
-    readerDebugLogPath
+    readerLogDirectory
   })
 
   ipcMain.handle('dialog:pickMarkdownFile', async () => {
@@ -119,6 +134,25 @@ app.whenReady().then(() => {
     await appendReaderDebugLog(`renderer:${event}`, payload)
   })
 
+  ipcMain.handle('search:searchInFolder', async (_, request: FolderSearchRequest) => {
+    void appendReaderDebugLog('search:folder:start', {
+      query: request.query,
+      folderPath: request.folderPath,
+      isRegex: request.isRegex,
+      excludeFolders: request.excludeFolders
+    })
+
+    const result = await searchInFolder(request)
+
+    void appendReaderDebugLog('search:folder:complete', {
+      matchCount: result.matches.length,
+      searchedFiles: result.searchedFiles,
+      truncated: result.truncated
+    })
+
+    return result
+  })
+
   createWindow()
 
   app.on('activate', () => {
@@ -126,10 +160,32 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+  }).catch((error: unknown) => {
+    console.error('Failed to start Markdown Reader', error)
+    app.quit()
+  })
+}
+
+app.on('before-quit', (event) => {
+  if (isQuitting) {
+    return
+  }
+
+  isQuitting = true
+  event.preventDefault()
+
+  const logger = readerLogger
+  if (!logger) {
+    app.exit(0)
+    return
+  }
+
+  void logger
+    .log('app:before-quit')
+    .then(() => logger.close())
+    .then(() => app.exit(0))
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  app.quit()
 })

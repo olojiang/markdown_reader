@@ -1,8 +1,8 @@
 apply plugin: 'com.android.application'
 
-def appVersionName = (project.findProperty("APP_VERSION_NAME") ?: "0.1.2").toString()
-def appVersionCodeRaw = (project.findProperty("APP_VERSION_CODE") ?: "102").toString()
-def appVersionCode = appVersionCodeRaw.isInteger() ? appVersionCodeRaw.toInteger() : 102
+def appVersionName = (project.findProperty("APP_VERSION_NAME") ?: "0.1.7").toString()
+def appVersionCodeRaw = (project.findProperty("APP_VERSION_CODE") ?: "107").toString()
+def appVersionCode = appVersionCodeRaw.isInteger() ? appVersionCodeRaw.toInteger() : 107
 def releaseStoreFile = (project.findProperty("RELEASE_STORE_FILE") ?: "reader-release.keystore").toString()
 def releaseStorePassword = (project.findProperty("RELEASE_STORE_PASSWORD") ?: "markdownreader").toString()
 def releaseKeyAlias = (project.findProperty("RELEASE_KEY_ALIAS") ?: "reader-upload").toString()
