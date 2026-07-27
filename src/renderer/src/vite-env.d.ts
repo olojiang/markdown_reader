@@ -5,6 +5,9 @@ import type { FileSearchResult, FolderSearchRequest } from '@shared/search-types
 
 declare global {
   interface Window {
+    markdownReaderAndroid?: {
+      setReadingMode: (isReadingMode: boolean) => void
+    }
     electronAPI: {
       pickMarkdownFile: () => Promise<string | null>
       readMarkdownFile: (filePath: string) => Promise<string>

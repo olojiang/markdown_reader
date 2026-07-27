@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 
@@ -25,6 +25,7 @@ import SearchPanel from './components/SearchPanel.vue'
 import type { OpenTabInfo, SearchNavigatePayload } from './components/SearchPanel.vue'
 import { findChapterIndexAtLine } from '@shared/text-search'
 import { getCompactReaderControlsState, type CompactReaderPanel } from './reader-controls-state'
+import { getVolumePageDirection } from './reader-keyboard'
 
 const sampleFilePath =
   '/Users/hunter/Downloads/toutiao/books/倚天：重生张无忌，多情公子-7379149479284329496.decoded.md'
@@ -141,6 +142,14 @@ const mdReaderSearchOpenTabs = computed((): OpenTabInfo[] =>
 )
 
 const mdReaderActiveTabFilePath = computed(() => mdReaderActiveTab.value?.filePath)
+
+watch(
+  mdReaderCompactReadingMode,
+  (isReadingMode) => {
+    window.markdownReaderAndroid?.setReadingMode(isReadingMode)
+  },
+  { immediate: true }
+)
 
 let savePositionTimer: number | null = null
 let compactLayoutMediaQuery: MediaQueryList | null = null
@@ -1399,6 +1408,24 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
     return
   }
 
+  const volumePageDirection = getVolumePageDirection(event)
+  if (
+    mdReaderCompactReadingMode.value &&
+    volumePageDirection !== null &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.shiftKey
+  ) {
+    event.preventDefault()
+    if (volumePageDirection < 0) {
+      goToPreviousPage()
+    } else {
+      goToNextPage()
+    }
+    return
+  }
+
   if (event.ctrlKey && event.key === 'ArrowLeft') {
     event.preventDefault()
     void goToPreviousChapter()
@@ -1863,7 +1890,7 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 
 .md-reader-app-root-compact-controls-hidden .md-reader-workspace-article-section :deep(.md-reader-article-body-article) {
   padding-top: calc(var(--md-reader-content-padding) + 34px);
-  padding-bottom: calc(var(--md-reader-content-padding) + 116px);
+  padding-bottom: calc(var(--md-reader-content-padding) + 196px);
 }
 
 .md-reader-header-section {
