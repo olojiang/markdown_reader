@@ -65,7 +65,7 @@ describe('ReaderArticle', () => {
     expect(styleAttr).toContain('--md-reader-background-color: #faf3dd')
   })
 
-  it('scrolls exactly one visible screen when changing pages', async () => {
+  it('keeps two lines of overlap and completes page scrolling in 160ms', async () => {
     const wrapper = mount(ReaderArticle, {
       props: {
         chapter: chapterA,
@@ -83,13 +83,30 @@ describe('ReaderArticle', () => {
       scrollTo: { configurable: true, value: scrollTo }
     })
 
-    wrapper.vm.scrollByPage(1)
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: 'smooth' })
+    const frameCallbacks: FrameRequestCallback[] = []
+    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frameCallbacks.push(callback)
+      return frameCallbacks.length
+    })
+    const cancelAnimationFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
 
     wrapper.vm.scrollByPage(1)
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 200, behavior: 'smooth' })
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
+    frameCallbacks.shift()?.(0)
+    frameCallbacks.shift()?.(160)
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 28, behavior: 'auto' })
+
+    wrapper.vm.scrollByPage(1)
+    frameCallbacks.shift()?.(0)
+    frameCallbacks.shift()?.(160)
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 56, behavior: 'auto' })
 
     wrapper.vm.scrollByPage(-1)
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: 'smooth' })
+    frameCallbacks.shift()?.(0)
+    frameCallbacks.shift()?.(160)
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 28, behavior: 'auto' })
+
+    requestAnimationFrame.mockRestore()
+    cancelAnimationFrame.mockRestore()
   })
 })

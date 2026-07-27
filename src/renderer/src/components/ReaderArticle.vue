@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import MarkdownIt from 'markdown-it'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ChapterItem, ReaderPreference } from '@shared/reader-types'
 
@@ -34,6 +34,9 @@ const mdParser = new MarkdownIt({
 })
 
 const mdReaderArticleBodyRef = ref<HTMLElement | null>(null)
+const readerPageOverlapLines = 2
+const readerPageScrollDurationMs = 160
+let readerPageScrollFrame: number | null = null
 
 const mdReaderArticleHtml = computed(() => {
   if (!props.chapter) {
@@ -78,6 +81,57 @@ function emitReaderScrollState(target: HTMLElement | null = mdReaderArticleBodyR
   })
 }
 
+function cancelPageScroll(): void {
+  if (readerPageScrollFrame === null) {
+    return
+  }
+
+  if (typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(readerPageScrollFrame)
+  }
+  readerPageScrollFrame = null
+}
+
+function setScrollTop(target: HTMLElement, top: number): void {
+  if (typeof target.scrollTo === 'function') {
+    target.scrollTo({ top, behavior: 'auto' })
+  } else {
+    target.scrollTop = top
+  }
+}
+
+function animatePageScroll(target: HTMLElement, nextScrollTop: number): void {
+  cancelPageScroll()
+
+  const startScrollTop = target.scrollTop
+  const scrollDistance = nextScrollTop - startScrollTop
+  if (scrollDistance === 0) {
+    setScrollTop(target, nextScrollTop)
+    return
+  }
+
+  if (typeof requestAnimationFrame !== 'function') {
+    setScrollTop(target, nextScrollTop)
+    return
+  }
+
+  let animationStartTime: number | null = null
+  const animate = (timestamp: number): void => {
+    animationStartTime ??= timestamp
+    const progress = Math.min((timestamp - animationStartTime) / readerPageScrollDurationMs, 1)
+    const easedProgress = 1 - Math.pow(1 - progress, 3)
+    setScrollTop(target, startScrollTop + scrollDistance * easedProgress)
+
+    if (progress < 1) {
+      readerPageScrollFrame = requestAnimationFrame(animate)
+    } else {
+      readerPageScrollFrame = null
+    }
+  }
+
+  readerPageScrollFrame = requestAnimationFrame(animate)
+}
+
 function scrollByPage(direction: -1 | 1): void {
   const target = mdReaderArticleBodyRef.value
   if (!target || target.clientHeight <= 0) {
@@ -85,22 +139,22 @@ function scrollByPage(direction: -1 | 1): void {
   }
 
   const maxScrollTop = Math.max(target.scrollHeight - target.clientHeight, 0)
+  const lineHeight = props.preference.fontSize * props.preference.lineHeight
+  const overlap = Math.round(lineHeight * readerPageOverlapLines)
+  const pageStep = Math.max(target.clientHeight - overlap, 1)
   const nextScrollTop = Math.min(
-    Math.max(target.scrollTop + direction * target.clientHeight, 0),
+    Math.max(target.scrollTop + direction * pageStep, 0),
     maxScrollTop
   )
 
-  if (typeof target.scrollTo === 'function') {
-    target.scrollTo({ top: nextScrollTop, behavior: 'smooth' })
-  } else {
-    target.scrollTop = nextScrollTop
-  }
+  animatePageScroll(target, nextScrollTop)
 }
 
 async function syncReaderScroll(): Promise<void> {
   await nextTick()
   const top = Math.max(props.initialScrollTop, 0)
   if (!mdReaderArticleBodyRef.value) return
+  cancelPageScroll()
   mdReaderArticleBodyRef.value.scrollTop = top
   emitReaderScrollState()
 }
@@ -115,6 +169,10 @@ watch(
 
 onMounted(() => {
   void syncReaderScroll()
+})
+
+onBeforeUnmount(() => {
+  cancelPageScroll()
 })
 
 defineExpose({ scrollByPage })
