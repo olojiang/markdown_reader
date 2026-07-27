@@ -1570,6 +1570,7 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 <template>
   <div
     class="md-reader-app-root"
+    :style="{ '--md-reader-reading-background-color': mdReaderPreference.backgroundColor }"
     :class="{
       'md-reader-app-root-compact': mdReaderIsCompactLoadedMode,
       'md-reader-app-root-compact-reading': mdReaderCompactReadingMode,
@@ -1886,6 +1887,26 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 
 .md-reader-app-root-compact-reading .md-reader-workspace-shell-reading-only {
   grid-template-rows: minmax(0, 1fr);
+}
+
+.md-reader-app-root-compact-reading {
+  padding: 0;
+  gap: 0;
+  background: var(--md-reader-reading-background-color);
+}
+
+.md-reader-app-root-compact-reading .md-reader-workspace-shell {
+  gap: 0;
+}
+
+.md-reader-app-root-compact-reading .md-reader-workspace-main {
+  gap: 0;
+}
+
+.md-reader-app-root-compact-reading .md-reader-workspace-article-section :deep(.md-reader-article-body-article) {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .md-reader-app-root-compact-controls-hidden .md-reader-workspace-article-section :deep(.md-reader-article-body-article) {
