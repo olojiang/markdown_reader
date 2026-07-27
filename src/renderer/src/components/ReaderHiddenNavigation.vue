@@ -67,7 +67,7 @@ const emit = defineEmits<{
 .md-reader-hidden-navigation {
   position: absolute;
   right: 12px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 162px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 282px);
   z-index: 10;
   display: grid;
   grid-template-columns: repeat(2, 48px);
@@ -121,7 +121,7 @@ const emit = defineEmits<{
 @media (max-width: 900px) {
   .md-reader-hidden-navigation {
     right: 10px;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 160px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 280px);
     grid-template-columns: repeat(2, 48px);
     gap: 7px;
   }
