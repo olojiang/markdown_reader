@@ -6,6 +6,13 @@ import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { fixChapterOrder, parseMarkdownDocument } from '@shared/markdown-parser'
 import { DEFAULT_READER_PREFERENCE } from '@shared/reader-defaults'
 import { READER_THEME_OPTIONS } from '@shared/reader-themes'
+import {
+  applyReplacementRules,
+  normalizeReplacementRules,
+  parseReplacementRulesText,
+  serializeReplacementRules,
+  type ReplacementRule
+} from '@shared/replacement-rules'
 import type {
   ParsedDocument,
   ReaderLastOpenedSession,
@@ -34,6 +41,8 @@ const READER_PREFERENCE_STORAGE_KEY = 'md-reader-preference-v1'
 const READER_POSITION_STORAGE_KEY = 'md-reader-position-v1'
 const READER_LAST_OPENED_STORAGE_KEY = 'md-reader-last-opened-v1'
 const READER_LAST_BOOK_TEXT_STORAGE_KEY = 'md-reader-last-book-text-v1'
+const READER_REPLACEMENT_RULES_STORAGE_KEY = 'md-reader-replacement-rules-v1'
+const READER_REPLACEMENT_RULE_TEXTS_STORAGE_KEY = 'md-reader-replacement-rule-texts-v1'
 
 const READER_CACHE_DB_NAME = 'md-reader-cache-db'
 const READER_CACHE_STORE_NAME = 'reader-cache-store'
@@ -52,6 +61,8 @@ interface ReaderCachedBookSnapshot {
 interface MobileReaderStoreData {
   positions: Record<string, ReaderPosition>
   preference: ReaderPreference | null
+  replacementRules: Record<string, ReplacementRule[]>
+  replacementRuleTexts: Record<string, string>
   lastOpenedSession: ReaderLastOpenedSession | null
   lastBookSnapshot: ReaderCachedBookSnapshot | null
 }
@@ -74,6 +85,8 @@ const mdReaderActiveTabId = ref('')
 const mdReaderCurrentSourceKey = ref('')
 const mdReaderParsedDocument = ref<ParsedDocument | null>(null)
 const mdReaderRawMarkdown = ref('')
+const mdReaderReplacementRules = ref<ReplacementRule[]>([])
+const mdReaderReplacementRulesText = ref('')
 const mdReaderActiveChapterIndex = ref(0)
 const mdReaderRestoredScrollTop = ref(0)
 const mdReaderLatestScrollTop = ref(0)
@@ -107,7 +120,10 @@ const mdReaderCompactControlsState = computed(() =>
   })
 )
 const mdReaderIsCompactLoadedMode = computed(() => mdReaderCompactControlsState.value.isCompactLoadedMode)
-const mdReaderCurrentChapterTitle = computed(() => mdReaderCurrentChapter.value?.title?.trim() || '未选择章节')
+const mdReaderCurrentChapterTitle = computed(() => {
+  const title = mdReaderCurrentChapter.value?.title?.trim()
+  return title ? applyReplacementRules(title, mdReaderReplacementRules.value) : '未选择章节'
+})
 const mdReaderCompactReadingMode = computed(() => mdReaderCompactControlsState.value.isCompactReadingMode)
 const mdReaderShowsConfigPanel = computed(() => mdReaderCompactControlsState.value.showsConfigPanel)
 const mdReaderShowChapterPanel = computed(() => mdReaderCompactControlsState.value.showChapterPanel)
@@ -395,10 +411,12 @@ async function loadMarkdownContent(sourceKey: string, sourceLabel: string, markd
 
   try {
     mdReaderRawMarkdown.value = markdownText
+    mdReaderCurrentSourceKey.value = sourceKey
+    mdReaderReplacementRulesText.value = await loadReaderReplacementRulesText(sourceKey)
+    mdReaderReplacementRules.value = parseReplacementRulesText(mdReaderReplacementRulesText.value).rules
     const parsed = parseMarkdownDocument(markdownText, sourceLabel)
 
     mdReaderParsedDocument.value = parsed
-    mdReaderCurrentSourceKey.value = sourceKey
     mdReaderActiveTabId.value = tabId
 
     const savedPosition = await loadReaderPosition(sourceKey)
@@ -809,6 +827,8 @@ function clearCurrentReaderDocument(): void {
   mdReaderCurrentSourceKey.value = ''
   mdReaderParsedDocument.value = null
   mdReaderRawMarkdown.value = ''
+  mdReaderReplacementRules.value = []
+  mdReaderReplacementRulesText.value = ''
   mdReaderActiveChapterIndex.value = 0
   mdReaderCanScrollPrevious.value = false
   mdReaderCanScrollNext.value = false
@@ -900,6 +920,20 @@ async function handlePreferenceChange(value: ReaderPreference): Promise<void> {
   await saveReaderPreference(mdReaderPreference.value)
 }
 
+function handleReplacementInput(value: string): void {
+  mdReaderReplacementRulesText.value = value
+  mdReaderReplacementRules.value = parseReplacementRulesText(value).rules
+}
+
+async function handleReplacementChange(value: string): Promise<void> {
+  handleReplacementInput(value)
+  if (!mdReaderCurrentSourceKey.value) {
+    return
+  }
+
+  await saveReaderReplacementRulesText(mdReaderCurrentSourceKey.value, value)
+}
+
 async function loadPreference(): Promise<void> {
   const savedPreference = await loadReaderPreference()
 
@@ -986,6 +1020,141 @@ async function saveReaderPreference(value: ReaderPreference): Promise<void> {
   }
 
   safeLocalStorageSet(READER_PREFERENCE_STORAGE_KEY, JSON.stringify(value))
+}
+
+async function loadReaderReplacementRules(sourceKey: string): Promise<ReplacementRule[]> {
+  if (mdReaderSupportsPathOpen.value) {
+    return window.electronAPI.loadReaderReplacementRules(sourceKey)
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    return mobileStore.replacementRules[sourceKey] ?? []
+  }
+
+  const raw = safeLocalStorageGet(READER_REPLACEMENT_RULES_STORAGE_KEY)
+  if (!raw) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return normalizeReplacementRules(parsed[sourceKey])
+  } catch {
+    return []
+  }
+}
+
+async function loadReaderReplacementRulesText(sourceKey: string): Promise<string> {
+  if (mdReaderSupportsPathOpen.value) {
+    const savedText = await window.electronAPI.loadReaderReplacementRulesText(sourceKey)
+    if (savedText !== null) {
+      return savedText
+    }
+
+    return serializeReplacementRules(await window.electronAPI.loadReaderReplacementRules(sourceKey))
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    if (Object.prototype.hasOwnProperty.call(mobileStore.replacementRuleTexts, sourceKey)) {
+      return mobileStore.replacementRuleTexts[sourceKey]
+    }
+
+    return serializeReplacementRules(mobileStore.replacementRules[sourceKey] ?? [])
+  }
+
+  const rawTexts = safeLocalStorageGet(READER_REPLACEMENT_RULE_TEXTS_STORAGE_KEY)
+  if (rawTexts) {
+    try {
+      const texts = JSON.parse(rawTexts) as Record<string, unknown>
+      if (typeof texts[sourceKey] === 'string') {
+        return texts[sourceKey]
+      }
+    } catch {
+      // Fall through to the pre-text storage format.
+    }
+  }
+
+  const rawRules = safeLocalStorageGet(READER_REPLACEMENT_RULES_STORAGE_KEY)
+  if (!rawRules) {
+    return ''
+  }
+
+  try {
+    const rulesBySource = JSON.parse(rawRules) as Record<string, unknown>
+    return serializeReplacementRules(normalizeReplacementRules(rulesBySource[sourceKey]))
+  } catch {
+    return ''
+  }
+}
+
+async function saveReaderReplacementRules(sourceKey: string, value: ReplacementRule[]): Promise<void> {
+  if (mdReaderSupportsPathOpen.value) {
+    await window.electronAPI.saveReaderReplacementRules(sourceKey, value)
+    return
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mobileStore.replacementRules[sourceKey] = normalizeReplacementRules(value)
+    await saveMobileReaderStore(mobileStore)
+    return
+  }
+
+  const raw = safeLocalStorageGet(READER_REPLACEMENT_RULES_STORAGE_KEY)
+  let rulesBySource: Record<string, ReplacementRule[]> = {}
+  if (raw) {
+    try {
+      rulesBySource = JSON.parse(raw) as Record<string, ReplacementRule[]>
+    } catch {
+      rulesBySource = {}
+    }
+  }
+  rulesBySource[sourceKey] = normalizeReplacementRules(value)
+  safeLocalStorageSet(READER_REPLACEMENT_RULES_STORAGE_KEY, JSON.stringify(rulesBySource))
+}
+
+async function saveReaderReplacementRulesText(sourceKey: string, value: string): Promise<void> {
+  const parsedRules = parseReplacementRulesText(value).rules
+
+  if (mdReaderSupportsPathOpen.value) {
+    await window.electronAPI.saveReaderReplacementRulesText(sourceKey, value)
+    await window.electronAPI.saveReaderReplacementRules(sourceKey, parsedRules)
+    return
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mobileStore.replacementRuleTexts[sourceKey] = value
+    mobileStore.replacementRules[sourceKey] = normalizeReplacementRules(parsedRules)
+    await saveMobileReaderStore(mobileStore)
+    return
+  }
+
+  const rawTexts = safeLocalStorageGet(READER_REPLACEMENT_RULE_TEXTS_STORAGE_KEY)
+  let textsBySource: Record<string, string> = {}
+  if (rawTexts) {
+    try {
+      textsBySource = JSON.parse(rawTexts) as Record<string, string>
+    } catch {
+      textsBySource = {}
+    }
+  }
+  textsBySource[sourceKey] = value
+  safeLocalStorageSet(READER_REPLACEMENT_RULE_TEXTS_STORAGE_KEY, JSON.stringify(textsBySource))
+
+  const rawRules = safeLocalStorageGet(READER_REPLACEMENT_RULES_STORAGE_KEY)
+  let rulesBySource: Record<string, ReplacementRule[]> = {}
+  if (rawRules) {
+    try {
+      rulesBySource = JSON.parse(rawRules) as Record<string, ReplacementRule[]>
+    } catch {
+      rulesBySource = {}
+    }
+  }
+  rulesBySource[sourceKey] = normalizeReplacementRules(parsedRules)
+  safeLocalStorageSet(READER_REPLACEMENT_RULES_STORAGE_KEY, JSON.stringify(rulesBySource))
 }
 
 async function loadLastOpenedSession(): Promise<ReaderLastOpenedSession | null> {
@@ -1224,6 +1393,8 @@ function normalizeMobileReaderStoreData(raw: unknown): MobileReaderStoreData {
     return {
       positions: {},
       preference: null,
+      replacementRules: {},
+      replacementRuleTexts: {},
       lastOpenedSession: null,
       lastBookSnapshot: null
     }
@@ -1252,6 +1423,8 @@ function normalizeMobileReaderStoreData(raw: unknown): MobileReaderStoreData {
   return {
     positions: normalizedPositions,
     preference: normalizeReaderPreference(candidate.preference ?? {}),
+    replacementRules: normalizeStoredMobileReplacementRules(candidate.replacementRules),
+    replacementRuleTexts: normalizeStoredMobileReplacementRuleTexts(candidate.replacementRuleTexts),
     lastOpenedSession: normalizeLastOpenedSession(candidate.lastOpenedSession),
     lastBookSnapshot: normalizeCachedBookSnapshot(candidate.lastBookSnapshot)
   }
@@ -1290,12 +1463,54 @@ function buildLegacyWebStoreSnapshot(): MobileReaderStoreData {
     }
   }
 
+  let replacementRules: Record<string, ReplacementRule[]> = {}
+  const rawReplacementRules = safeLocalStorageGet(READER_REPLACEMENT_RULES_STORAGE_KEY)
+  if (rawReplacementRules) {
+    try {
+      replacementRules = normalizeStoredMobileReplacementRules(JSON.parse(rawReplacementRules))
+    } catch {
+      replacementRules = {}
+    }
+  }
+
+  let replacementRuleTexts: Record<string, string> = {}
+  const rawReplacementRuleTexts = safeLocalStorageGet(READER_REPLACEMENT_RULE_TEXTS_STORAGE_KEY)
+  if (rawReplacementRuleTexts) {
+    try {
+      replacementRuleTexts = normalizeStoredMobileReplacementRuleTexts(JSON.parse(rawReplacementRuleTexts))
+    } catch {
+      replacementRuleTexts = {}
+    }
+  }
+
   return {
     positions,
     preference,
+    replacementRules,
+    replacementRuleTexts,
     lastOpenedSession,
     lastBookSnapshot
   }
+}
+
+function normalizeStoredMobileReplacementRules(rawValue: unknown): Record<string, ReplacementRule[]> {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(rawValue as Record<string, unknown>).map(([sourceKey, rules]) => [sourceKey, normalizeReplacementRules(rules)])
+  )
+}
+
+function normalizeStoredMobileReplacementRuleTexts(rawValue: unknown): Record<string, string> {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(rawValue as Record<string, unknown>).filter(([, value]) => typeof value === 'string')
+  ) as Record<string, string>
 }
 
 function loadWebStorePositions(): Record<string, ReaderPosition> {
@@ -1733,7 +1948,16 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
                 </div>
               </form>
             </section>
-            <ReaderSettings :preference="mdReaderPreference" :themes="READER_THEME_OPTIONS" @change="handlePreferenceChange" />
+            <ReaderSettings
+              :preference="mdReaderPreference"
+              :themes="READER_THEME_OPTIONS"
+              :source-label="mdReaderActiveTab ? displayTabLabel(mdReaderActiveTab) : undefined"
+              :replacement-rules="mdReaderReplacementRules"
+              :replacement-rules-text="mdReaderReplacementRulesText"
+              @change="handlePreferenceChange"
+              @replacement-input="handleReplacementInput"
+              @replacement-change="handleReplacementChange"
+            />
             <div class="md-reader-fix-chapter-section">
               <button
                 type="button"
@@ -1814,6 +2038,7 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
             ref="mdReaderArticleRef"
             :chapter="mdReaderCurrentChapter"
             :preference="mdReaderPreference"
+            :replacement-rules="mdReaderReplacementRules"
             :hide-title="mdReaderIsCompactLoadedMode"
             :initial-scroll-top="mdReaderRestoredScrollTop"
             @scroll-change="handleReaderScrollChange"

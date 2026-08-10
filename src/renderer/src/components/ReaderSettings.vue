@@ -1,16 +1,37 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
+
 import type { ReaderPreference } from '@shared/reader-types'
 import { applyReaderTheme } from '@shared/reader-themes'
 import type { ReaderThemeOption } from '@shared/reader-themes'
+import { parseReplacementRulesText, serializeReplacementRules, type ReplacementRule } from '@shared/replacement-rules'
 
 const props = defineProps<{
   preference: ReaderPreference
   themes: ReaderThemeOption[]
+  sourceLabel?: string
+  replacementRules: ReplacementRule[]
+  replacementRulesText: string
 }>()
 
 const emit = defineEmits<{
   change: [value: ReaderPreference]
+  'replacement-input': [value: string]
+  'replacement-change': [value: string]
 }>()
+
+const replacementRulesText = ref(props.replacementRulesText || serializeReplacementRules(props.replacementRules))
+const replacementRulesError = ref(formatReplacementRulesError(replacementRulesText.value))
+
+watch(
+  () => props.replacementRulesText,
+  (value) => {
+    if (value !== replacementRulesText.value) {
+      replacementRulesText.value = value
+      replacementRulesError.value = formatReplacementRulesError(value)
+    }
+  },
+)
 
 function updatePreference(patch: Partial<ReaderPreference>): void {
   emit('change', {
@@ -26,6 +47,25 @@ function updateTheme(themeKey: string): void {
   }
 
   emit('change', applyReaderTheme(props.preference, selectedTheme.key))
+}
+
+function updateReplacementRules(text: string): void {
+  replacementRulesText.value = text
+  emit('replacement-input', text)
+  replacementRulesError.value = formatReplacementRulesError(text)
+}
+
+function commitReplacementRules(): void {
+  emit('replacement-change', replacementRulesText.value)
+}
+
+function formatReplacementRulesError(text: string): string {
+  const invalidLines = parseReplacementRulesText(text).invalidLines
+  if (invalidLines.length === 0) {
+    return ''
+  }
+
+  return `第 ${invalidLines.map((line) => line.lineNumber).join('、')} 行格式无效，请使用 From1,From2:To`
 }
 </script>
 
@@ -106,6 +146,27 @@ function updateTheme(themeKey: string): void {
         @input="updatePreference({ backgroundColor: ($event.target as HTMLInputElement).value })"
       />
     </fieldset>
+
+    <fieldset class="md-reader-settings-fieldset md-reader-replacement-settings-fieldset">
+      <legend class="md-reader-settings-legend">当前文件替换</legend>
+      <p v-if="sourceLabel" class="md-reader-settings-help-text">仅对当前文件生效：{{ sourceLabel }}</p>
+      <p v-else class="md-reader-settings-help-text">请先打开文件，再配置当前文件的替换。</p>
+      <label class="md-reader-settings-label" for="reader-replacement-rules-input">替换规则</label>
+      <textarea
+        id="reader-replacement-rules-input"
+        data-testid="reader-replacement-rules-input"
+        class="md-reader-settings-textarea-input"
+        :value="replacementRulesText"
+        :disabled="!sourceLabel"
+        placeholder="From1,From2:To\n每行一条规则"
+        rows="6"
+        spellcheck="false"
+        @input="updateReplacementRules(($event.target as HTMLTextAreaElement).value)"
+        @blur="commitReplacementRules"
+      ></textarea>
+      <p v-if="replacementRulesError" class="md-reader-settings-error-text" role="alert">{{ replacementRulesError }}</p>
+      <p class="md-reader-settings-help-text">支持中文或英文逗号；替换发生在每章 Markdown 渲染之前。</p>
+    </fieldset>
   </form>
 </template>
 
@@ -122,6 +183,10 @@ function updateTheme(themeKey: string): void {
   background: linear-gradient(180deg, #fffcf5 0%, #fdf6e7 100%);
 }
 
+.md-reader-replacement-settings-fieldset {
+  margin-top: 12px;
+}
+
 .md-reader-settings-legend {
   padding: 0 6px;
   font-weight: 600;
@@ -136,11 +201,38 @@ function updateTheme(themeKey: string): void {
   color: #4f452f;
 }
 
+.md-reader-settings-help-text,
+.md-reader-settings-error-text {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.md-reader-settings-help-text {
+  color: #665b46;
+}
+
+.md-reader-settings-error-text {
+  color: #a23d2d;
+}
+
 .md-reader-settings-range-input,
 .md-reader-settings-color-input,
-.md-reader-settings-select-input {
+.md-reader-settings-select-input,
+.md-reader-settings-textarea-input {
   width: 100%;
   box-sizing: border-box;
+}
+
+.md-reader-settings-textarea-input {
+  min-height: 108px;
+  resize: vertical;
+  border: 1px solid #d8c9ad;
+  border-radius: 10px;
+  padding: 8px;
+  background: #ffffff;
+  color: #2d261a;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .md-reader-settings-select-input {
@@ -166,7 +258,8 @@ function updateTheme(themeKey: string): void {
 
 .md-reader-settings-select-input:focus-visible,
 .md-reader-settings-color-input:focus-visible,
-.md-reader-settings-range-input:focus-visible {
+.md-reader-settings-range-input:focus-visible,
+.md-reader-settings-textarea-input:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px rgba(107, 82, 32, 0.2);
 }

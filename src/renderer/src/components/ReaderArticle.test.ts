@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ChapterItem, ReaderPreference } from '@shared/reader-types'
+import type { ReplacementRule } from '@shared/replacement-rules'
 import ReaderArticle from './ReaderArticle.vue'
 
 const preference: ReaderPreference = {
@@ -39,6 +40,7 @@ describe('ReaderArticle', () => {
     expect(wrapper.text()).toContain('第一章正文')
     expect(wrapper.text()).not.toContain('第二章正文')
     expect(wrapper.get('[data-testid="md-reader-article-title"]').text()).toBe('第一章')
+    expect(wrapper.get('[data-testid="md-reader-article-content"]').html()).not.toContain('<h1>')
 
     await wrapper.setProps({ chapter: chapterB })
 
@@ -63,6 +65,24 @@ describe('ReaderArticle', () => {
     expect(styleAttr).toContain('--md-reader-content-padding: 14px')
     expect(styleAttr).toContain('--md-reader-font-color: #111111')
     expect(styleAttr).toContain('--md-reader-background-color: #faf3dd')
+  })
+
+  it('applies the current file replacement rules before markdown rendering', () => {
+    const replacementRules: ReplacementRule[] = [
+      { from: ['第一章正文', '正文'], to: '替换后' },
+      { from: ['第一章'], to: '替换章节' }
+    ]
+    const wrapper = mount(ReaderArticle, {
+      props: {
+        chapter: chapterA,
+        preference,
+        replacementRules
+      }
+    })
+
+    expect(wrapper.text()).toContain('替换后')
+    expect(wrapper.text()).not.toContain('第一章正文')
+    expect(wrapper.get('[data-testid="md-reader-article-title"]').text()).toBe('替换章节')
   })
 
   it('keeps two lines of overlap and completes page scrolling in 160ms', async () => {

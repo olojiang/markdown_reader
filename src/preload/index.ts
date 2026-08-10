@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '../shared/reader-types'
+import type { ReplacementRule } from '../shared/replacement-rules'
 import type { FileSearchResult, FolderSearchRequest } from '../shared/search-types'
 
 const electronAPI = {
@@ -12,6 +13,12 @@ const electronAPI = {
     ipcRenderer.invoke('reader:savePosition', filePath, value),
   loadReaderPreference: (): Promise<ReaderPreference | null> => ipcRenderer.invoke('reader:loadPreference'),
   saveReaderPreference: (value: ReaderPreference): Promise<void> => ipcRenderer.invoke('reader:savePreference', value),
+  loadReaderReplacementRules: (sourceKey: string): Promise<ReplacementRule[]> => ipcRenderer.invoke('reader:loadReplacementRules', sourceKey),
+  saveReaderReplacementRules: (sourceKey: string, value: ReplacementRule[]): Promise<void> =>
+    ipcRenderer.invoke('reader:saveReplacementRules', sourceKey, value),
+  loadReaderReplacementRulesText: (sourceKey: string): Promise<string | null> => ipcRenderer.invoke('reader:loadReplacementRulesText', sourceKey),
+  saveReaderReplacementRulesText: (sourceKey: string, value: string): Promise<void> =>
+    ipcRenderer.invoke('reader:saveReplacementRulesText', sourceKey, value),
   loadLastOpenedSession: (): Promise<ReaderLastOpenedSession | null> => ipcRenderer.invoke('reader:loadLastOpenedSession'),
   saveLastOpenedSession: (value: ReaderLastOpenedSession | null): Promise<void> =>
     ipcRenderer.invoke('reader:saveLastOpenedSession', value),

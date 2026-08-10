@@ -2,18 +2,23 @@
 import MarkdownIt from 'markdown-it'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { prepareChapterMarkdownForRender } from '@shared/chapter-markdown-render'
+import { applyReplacementRules } from '@shared/replacement-rules'
 import type { ChapterItem, ReaderPreference } from '@shared/reader-types'
+import type { ReplacementRule } from '@shared/replacement-rules'
 
 const props = withDefaults(
   defineProps<{
     chapter: ChapterItem | null
     preference: ReaderPreference
+    replacementRules?: ReplacementRule[]
     initialScrollTop?: number
     hideTitle?: boolean
   }>(),
   {
     initialScrollTop: 0,
-    hideTitle: false
+    hideTitle: false,
+    replacementRules: () => []
   }
 )
 
@@ -32,6 +37,7 @@ const mdParser = new MarkdownIt({
   linkify: true,
   breaks: true
 })
+mdParser.disable('lheading')
 
 const mdReaderArticleBodyRef = ref<HTMLElement | null>(null)
 const readerPageOverlapLines = 2
@@ -43,7 +49,8 @@ const mdReaderArticleHtml = computed(() => {
     return '<p>请选择一个章节开始阅读。</p>'
   }
 
-  return mdParser.render(props.chapter.markdown)
+  const markdown = prepareChapterMarkdownForRender(props.chapter.markdown, props.replacementRules)
+  return mdParser.render(markdown)
 })
 
 const mdReaderChapterTitle = computed(() => {
@@ -52,7 +59,7 @@ const mdReaderChapterTitle = computed(() => {
     return '未选择章节'
   }
 
-  return title
+  return applyReplacementRules(title, props.replacementRules)
 })
 
 const mdReaderArticleStyle = computed(() => ({
@@ -232,9 +239,14 @@ defineExpose({ scrollByPage })
 .md-reader-article-body-article :deep(h1),
 .md-reader-article-body-article :deep(h2),
 .md-reader-article-body-article :deep(h3),
-.md-reader-article-body-article :deep(h4) {
+.md-reader-article-body-article :deep(h4),
+.md-reader-article-body-article :deep(h5),
+.md-reader-article-body-article :deep(h6) {
   margin-top: 1.25em;
   margin-bottom: 0.5em;
+  font-size: inherit;
+  font-weight: 600;
+  line-height: inherit;
 }
 
 .md-reader-article-body-article :deep(p) {

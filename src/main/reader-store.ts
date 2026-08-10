@@ -2,12 +2,15 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { DEFAULT_READER_PREFERENCE } from '../shared/reader-defaults'
+import { normalizeReplacementRules, type ReplacementRule } from '../shared/replacement-rules'
 import { getReaderThemeOption, READER_THEME_OPTIONS } from '../shared/reader-themes'
 import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderSessionTab, ReaderThemeKey } from '../shared/reader-types'
 
 interface ReaderStoreData {
   positions: Record<string, ReaderPosition>
   preference: ReaderPreference
+  replacementRules: Record<string, ReplacementRule[]>
+  replacementRuleTexts: Record<string, string>
   lastOpenedSession: ReaderLastOpenedSession | null
 }
 
@@ -38,6 +41,28 @@ export function createReaderStore(storagePath: string, log?: ReaderStoreLogger) 
     await writeStoreData(storagePath, data)
   }
 
+  async function loadReplacementRules(sourceKey: string): Promise<ReplacementRule[]> {
+    const data = await readStoreData(storagePath)
+    return data.replacementRules[sourceKey] ?? []
+  }
+
+  async function saveReplacementRules(sourceKey: string, value: ReplacementRule[]): Promise<void> {
+    const data = await readStoreData(storagePath)
+    data.replacementRules[sourceKey] = normalizeReplacementRules(value)
+    await writeStoreData(storagePath, data)
+  }
+
+  async function loadReplacementRulesText(sourceKey: string): Promise<string | null> {
+    const data = await readStoreData(storagePath)
+    return data.replacementRuleTexts[sourceKey] ?? null
+  }
+
+  async function saveReplacementRulesText(sourceKey: string, value: string): Promise<void> {
+    const data = await readStoreData(storagePath)
+    data.replacementRuleTexts[sourceKey] = value
+    await writeStoreData(storagePath, data)
+  }
+
   async function loadLastOpenedSession(): Promise<ReaderLastOpenedSession | null> {
     const data = await readStoreData(storagePath)
     log?.('loadLastOpenedSession', summarizeLastOpenedSession(data.lastOpenedSession))
@@ -57,6 +82,10 @@ export function createReaderStore(storagePath: string, log?: ReaderStoreLogger) 
     savePosition,
     loadPreference,
     savePreference,
+    loadReplacementRules,
+    saveReplacementRules,
+    loadReplacementRulesText,
+    saveReplacementRulesText,
     loadLastOpenedSession,
     saveLastOpenedSession
   }
@@ -82,15 +111,39 @@ async function readStoreData(storagePath: string): Promise<ReaderStoreData> {
     return {
       positions: parsed.positions ?? {},
       preference: normalizeStoredPreference(parsed.preference),
+      replacementRules: normalizeStoredReplacementRules(parsed.replacementRules),
+      replacementRuleTexts: normalizeStoredReplacementRuleTexts(parsed.replacementRuleTexts),
       lastOpenedSession: normalizeLastOpenedSession(parsed.lastOpenedSession)
     }
   } catch {
     return {
       positions: {},
       preference: DEFAULT_READER_PREFERENCE,
+      replacementRules: {},
+      replacementRuleTexts: {},
       lastOpenedSession: null
     }
   }
+}
+
+function normalizeStoredReplacementRules(rawValue: unknown): Record<string, ReplacementRule[]> {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(rawValue as Record<string, unknown>).map(([sourceKey, rules]) => [sourceKey, normalizeReplacementRules(rules)])
+  )
+}
+
+function normalizeStoredReplacementRuleTexts(rawValue: unknown): Record<string, string> {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(rawValue as Record<string, unknown>).filter(([, value]) => typeof value === 'string')
+  ) as Record<string, string>
 }
 
 async function writeStoreData(storagePath: string, data: ReaderStoreData): Promise<void> {

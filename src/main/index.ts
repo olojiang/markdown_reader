@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 
 import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '../shared/reader-types'
+import type { ReplacementRule } from '../shared/replacement-rules'
 import type { FolderSearchRequest } from '../shared/search-types'
 
 import { searchInFolder } from './file-search'
@@ -120,6 +121,22 @@ if (hasSingleInstanceLock) {
 
   ipcMain.handle('reader:savePreference', async (_, value: ReaderPreference): Promise<void> => {
     await readerStore.savePreference(value)
+  })
+
+  ipcMain.handle('reader:loadReplacementRules', async (_, sourceKey: string): Promise<ReplacementRule[]> => {
+    return readerStore.loadReplacementRules(sourceKey)
+  })
+
+  ipcMain.handle('reader:saveReplacementRules', async (_, sourceKey: string, value: ReplacementRule[]): Promise<void> => {
+    await readerStore.saveReplacementRules(sourceKey, value)
+  })
+
+  ipcMain.handle('reader:loadReplacementRulesText', async (_, sourceKey: string): Promise<string | null> => {
+    return readerStore.loadReplacementRulesText(sourceKey)
+  })
+
+  ipcMain.handle('reader:saveReplacementRulesText', async (_, sourceKey: string, value: string): Promise<void> => {
+    await readerStore.saveReplacementRulesText(sourceKey, value)
   })
 
   ipcMain.handle('reader:loadLastOpenedSession', async (): Promise<ReaderLastOpenedSession | null> => {
