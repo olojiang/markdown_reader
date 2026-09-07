@@ -2635,10 +2635,12 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 14px;
   height: 100%;
+  min-width: 0;
   min-height: 0;
 }
 
 .md-reader-workspace-sidebar {
+  min-width: 0;
   min-height: 0;
   display: grid;
   align-content: start;
@@ -2649,6 +2651,7 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 }
 
 .md-reader-sidebar-panel-details {
+  min-width: 0;
   border: 1px solid var(--md-stroke);
   border-radius: 12px;
   background: var(--md-surface-2);
@@ -2663,6 +2666,8 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 }
 
 .md-reader-sidebar-panel-content-section {
+  min-width: 0;
+  box-sizing: border-box;
   padding: 6px 12px 12px;
 }
 
@@ -2686,6 +2691,8 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 }
 
 .md-reader-compact-file-shell-section {
+  min-width: 0;
+  box-sizing: border-box;
   margin-bottom: 12px;
   padding: 10px;
   border: 1px solid var(--md-stroke);
@@ -2711,6 +2718,7 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 }
 
 .md-reader-recent-files-section {
+  min-width: 0;
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid rgba(140, 122, 87, 0.28);
@@ -2724,6 +2732,8 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
 }
 
 .md-reader-recent-files-list {
+  min-width: 0;
+  max-width: 100%;
   display: grid;
   gap: 5px;
   max-height: 220px;
@@ -2733,8 +2743,15 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
   list-style: none;
 }
 
+.md-reader-recent-file-item {
+  min-width: 0;
+}
+
 .md-reader-recent-file-button {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   min-height: 36px;
   padding: 0 9px;
   overflow: hidden;
@@ -2745,7 +2762,9 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
   cursor: pointer;
   text-align: left;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .md-reader-recent-file-button:hover:not(:disabled),
