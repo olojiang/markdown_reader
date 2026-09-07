@@ -6,6 +6,12 @@ import { applyReaderTheme } from '@shared/reader-themes'
 import type { ReaderThemeOption } from '@shared/reader-themes'
 import { parseReplacementRulesText, serializeReplacementRules, type ReplacementRule } from '@shared/replacement-rules'
 
+const READER_FONT_SIZE_MIN = 14
+const READER_FONT_SIZE_MAX = 40
+const READER_LINE_HEIGHT_MIN = 1.2
+const READER_LINE_HEIGHT_MAX = 2.8
+const READER_LINE_HEIGHT_STEP = 0.05
+
 const props = defineProps<{
   preference: ReaderPreference
   themes: ReaderThemeOption[]
@@ -49,6 +55,18 @@ function updateTheme(themeKey: string): void {
   emit('change', applyReaderTheme(props.preference, selectedTheme.key))
 }
 
+function adjustFontSize(delta: number): void {
+  const nextValue = Math.min(Math.max(props.preference.fontSize + delta, READER_FONT_SIZE_MIN), READER_FONT_SIZE_MAX)
+  updatePreference({ fontSize: nextValue })
+}
+
+function adjustLineHeight(delta: number): void {
+  const nextValue = Number(
+    Math.min(Math.max(props.preference.lineHeight + delta * READER_LINE_HEIGHT_STEP, READER_LINE_HEIGHT_MIN), READER_LINE_HEIGHT_MAX).toFixed(2)
+  )
+  updatePreference({ lineHeight: nextValue })
+}
+
 function updateReplacementRules(text: string): void {
   replacementRulesText.value = text
   emit('replacement-input', text)
@@ -71,6 +89,9 @@ function formatReplacementRulesError(text: string): string {
 
 <template>
   <form class="md-reader-settings-form" aria-label="阅读设置" @submit.prevent>
+    <p class="md-reader-current-file" data-testid="reader-current-file">
+      当前文件：<strong>{{ sourceLabel || '未打开文件' }}</strong>
+    </p>
     <fieldset class="md-reader-settings-fieldset">
       <legend class="md-reader-settings-legend">阅读样式</legend>
 
@@ -86,33 +107,65 @@ function formatReplacementRulesError(text: string): string {
         </option>
       </select>
 
-      <label class="md-reader-settings-label" for="md-reader-font-size-input">
+      <label class="md-reader-settings-label" for="reader-font-size-decrease">
         字号：{{ preference.fontSize }}px
       </label>
-      <input
-        id="md-reader-font-size-input"
-        class="md-reader-settings-range-input"
-        type="range"
-        min="14"
-        max="40"
-        step="1"
-        :value="preference.fontSize"
-        @input="updatePreference({ fontSize: Number(($event.target as HTMLInputElement).value) })"
-      />
+      <div class="md-reader-settings-stepper" role="group" aria-label="字号调整">
+        <button
+          id="reader-font-size-decrease"
+          data-testid="reader-font-size-decrease"
+          class="md-reader-settings-stepper-button"
+          type="button"
+          :disabled="preference.fontSize <= READER_FONT_SIZE_MIN"
+          aria-label="减小字号"
+          title="减小字号"
+          @click="adjustFontSize(-1)"
+        >
+          −
+        </button>
+        <output class="md-reader-settings-stepper-value" data-testid="reader-font-size-value">{{ preference.fontSize }}px</output>
+        <button
+          data-testid="reader-font-size-increase"
+          class="md-reader-settings-stepper-button"
+          type="button"
+          :disabled="preference.fontSize >= READER_FONT_SIZE_MAX"
+          aria-label="增大字号"
+          title="增大字号"
+          @click="adjustFontSize(1)"
+        >
+          +
+        </button>
+      </div>
 
-      <label class="md-reader-settings-label" for="md-reader-line-height-input">
+      <label class="md-reader-settings-label" for="reader-line-height-decrease">
         行间距：{{ preference.lineHeight.toFixed(2) }}
       </label>
-      <input
-        id="md-reader-line-height-input"
-        class="md-reader-settings-range-input"
-        type="range"
-        min="1.2"
-        max="2.8"
-        step="0.05"
-        :value="preference.lineHeight"
-        @input="updatePreference({ lineHeight: Number(($event.target as HTMLInputElement).value) })"
-      />
+      <div class="md-reader-settings-stepper" role="group" aria-label="行间距调整">
+        <button
+          id="reader-line-height-decrease"
+          data-testid="reader-line-height-decrease"
+          class="md-reader-settings-stepper-button"
+          type="button"
+          :disabled="preference.lineHeight <= READER_LINE_HEIGHT_MIN"
+          aria-label="减小行间距"
+          title="减小行间距"
+          @click="adjustLineHeight(-1)"
+        >
+          −
+        </button>
+        <output class="md-reader-settings-stepper-value" data-testid="reader-line-height-value">{{ preference.lineHeight.toFixed(2) }}</output>
+        <button
+          data-testid="reader-line-height-increase"
+          class="md-reader-settings-stepper-button"
+          type="button"
+          :disabled="preference.lineHeight >= READER_LINE_HEIGHT_MAX"
+          aria-label="增大行间距"
+          title="增大行间距"
+          @click="adjustLineHeight(1)"
+        >
+          +
+        </button>
+      </div>
 
       <label class="md-reader-settings-label" for="md-reader-content-padding-input">
         边距：{{ preference.contentPadding }}px
@@ -173,6 +226,15 @@ function formatReplacementRulesError(text: string): string {
 <style lang="less" scoped>
 .md-reader-settings-form {
   margin-top: 0;
+}
+
+.md-reader-current-file {
+  margin: 0 0 12px;
+  overflow: hidden;
+  color: #4f452f;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .md-reader-settings-fieldset {
@@ -256,9 +318,49 @@ function formatReplacementRulesError(text: string): string {
   min-height: 30px;
 }
 
+.md-reader-settings-stepper {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  gap: 8px;
+  align-items: center;
+}
+
+.md-reader-settings-stepper-button {
+  min-height: 42px;
+  border: 1px solid #b9a77e;
+  border-radius: 10px;
+  background: #fffaf0;
+  color: #4f3c1a;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.md-reader-settings-stepper-button:hover:not(:disabled),
+.md-reader-settings-stepper-button:active:not(:disabled) {
+  background: #f0dfb7;
+}
+
+.md-reader-settings-stepper-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.md-reader-settings-stepper-value {
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d8c9ad;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #2d261a;
+  font-variant-numeric: tabular-nums;
+}
+
 .md-reader-settings-select-input:focus-visible,
 .md-reader-settings-color-input:focus-visible,
 .md-reader-settings-range-input:focus-visible,
+.md-reader-settings-stepper-button:focus-visible,
 .md-reader-settings-textarea-input:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px rgba(107, 82, 32, 0.2);

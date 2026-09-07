@@ -69,3 +69,36 @@ describe('ReaderSettings replacement rules', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('第 2 行')
   })
 })
+
+describe('ReaderSettings step controls', () => {
+  it('adjusts font size and line height with precise plus and minus steps', async () => {
+    const wrapper = mount(ReaderSettings, {
+      props: {
+        preference,
+        themes: READER_THEME_OPTIONS,
+        sourceLabel: 'book.md',
+        replacementRules: [],
+        replacementRulesText: ''
+      }
+    })
+
+    expect(wrapper.get('[data-testid="reader-current-file"]').text()).toContain('book.md')
+
+    await wrapper.get('[data-testid="reader-font-size-increase"]').trigger('click')
+    expect(wrapper.emitted('change')?.[0]?.[0]).toMatchObject({ fontSize: 19 })
+
+    await wrapper.get('[data-testid="reader-line-height-increase"]').trigger('click')
+    expect(wrapper.emitted('change')?.[1]?.[0]).toMatchObject({ lineHeight: 1.85 })
+
+    await wrapper.setProps({
+      preference: {
+        ...preference,
+        fontSize: 14,
+        lineHeight: 1.2
+      }
+    })
+
+    expect(wrapper.get('[data-testid="reader-font-size-decrease"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="reader-line-height-decrease"]').attributes('disabled')).toBeDefined()
+  })
+})

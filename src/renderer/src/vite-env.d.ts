@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '@shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderRecentFile } from '@shared/reader-types'
 import type { ReplacementRule } from '@shared/replacement-rules'
 import type { FileSearchResult, FolderSearchRequest } from '@shared/search-types'
 
@@ -23,6 +23,8 @@ declare global {
       saveReaderReplacementRulesText: (sourceKey: string, value: string) => Promise<void>
       loadLastOpenedSession: () => Promise<ReaderLastOpenedSession | null>
       saveLastOpenedSession: (value: ReaderLastOpenedSession | null) => Promise<void>
+      loadRecentFiles: () => Promise<ReaderRecentFile[]>
+      saveRecentFiles: (value: ReaderRecentFile[]) => Promise<void>
       writeReaderDebugLog: (event: string, payload?: unknown) => Promise<void>
       searchInFolder: (request: FolderSearchRequest) => Promise<FileSearchResult>
     }

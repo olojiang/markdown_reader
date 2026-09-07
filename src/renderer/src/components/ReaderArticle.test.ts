@@ -85,6 +85,23 @@ describe('ReaderArticle', () => {
     expect(wrapper.get('[data-testid="md-reader-article-title"]').text()).toBe('替换章节')
   })
 
+  it('keeps strikethrough text readable without rendering a strike line', () => {
+    const wrapper = mount(ReaderArticle, {
+      props: {
+        chapter: {
+          ...chapterA,
+          markdown: '正文 ~~被划掉的文字~~ 继续正文'
+        },
+        preference
+      }
+    })
+
+    const content = wrapper.get('[data-testid="md-reader-article-content"]')
+
+    expect(content.text()).toContain('正文 被划掉的文字 继续正文')
+    expect(content.html()).not.toContain('<s>')
+  })
+
   it('keeps two lines of overlap and completes page scrolling in 160ms', async () => {
     const wrapper = mount(ReaderArticle, {
       props: {

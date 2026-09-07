@@ -3,8 +3,9 @@ import { dirname } from 'node:path'
 
 import { DEFAULT_READER_PREFERENCE } from '../shared/reader-defaults'
 import { normalizeReplacementRules, type ReplacementRule } from '../shared/replacement-rules'
+import { normalizeRecentFiles } from '../shared/recent-files'
 import { getReaderThemeOption, READER_THEME_OPTIONS } from '../shared/reader-themes'
-import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderSessionTab, ReaderThemeKey } from '../shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderRecentFile, ReaderSessionTab, ReaderThemeKey } from '../shared/reader-types'
 
 interface ReaderStoreData {
   positions: Record<string, ReaderPosition>
@@ -12,6 +13,7 @@ interface ReaderStoreData {
   replacementRules: Record<string, ReplacementRule[]>
   replacementRuleTexts: Record<string, string>
   lastOpenedSession: ReaderLastOpenedSession | null
+  recentFiles: ReaderRecentFile[]
 }
 
 type ReaderStoreLogger = (event: string, payload?: Record<string, unknown>) => void
@@ -77,6 +79,17 @@ export function createReaderStore(storagePath: string, log?: ReaderStoreLogger) 
     log?.('saveLastOpenedSession:complete', summarizeLastOpenedSession(value))
   }
 
+  async function loadRecentFiles(): Promise<ReaderRecentFile[]> {
+    const data = await readStoreData(storagePath)
+    return data.recentFiles
+  }
+
+  async function saveRecentFiles(value: ReaderRecentFile[]): Promise<void> {
+    const data = await readStoreData(storagePath)
+    data.recentFiles = normalizeRecentFiles(value)
+    await writeStoreData(storagePath, data)
+  }
+
   return {
     loadPosition,
     savePosition,
@@ -87,7 +100,9 @@ export function createReaderStore(storagePath: string, log?: ReaderStoreLogger) 
     loadReplacementRulesText,
     saveReplacementRulesText,
     loadLastOpenedSession,
-    saveLastOpenedSession
+    saveLastOpenedSession,
+    loadRecentFiles,
+    saveRecentFiles
   }
 }
 
@@ -113,7 +128,8 @@ async function readStoreData(storagePath: string): Promise<ReaderStoreData> {
       preference: normalizeStoredPreference(parsed.preference),
       replacementRules: normalizeStoredReplacementRules(parsed.replacementRules),
       replacementRuleTexts: normalizeStoredReplacementRuleTexts(parsed.replacementRuleTexts),
-      lastOpenedSession: normalizeLastOpenedSession(parsed.lastOpenedSession)
+      lastOpenedSession: normalizeLastOpenedSession(parsed.lastOpenedSession),
+      recentFiles: normalizeRecentFiles(parsed.recentFiles)
     }
   } catch {
     return {
@@ -121,7 +137,8 @@ async function readStoreData(storagePath: string): Promise<ReaderStoreData> {
       preference: DEFAULT_READER_PREFERENCE,
       replacementRules: {},
       replacementRuleTexts: {},
-      lastOpenedSession: null
+      lastOpenedSession: null,
+      recentFiles: []
     }
   }
 }

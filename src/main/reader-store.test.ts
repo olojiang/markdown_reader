@@ -161,6 +161,31 @@ describe('createReaderStore', () => {
     expect(value?.tabs?.map((tab) => tab.sourceKey)).toEqual(['/book/a.md', '/book/b.md'])
   })
 
+  it('persists and normalizes the ten most recent files', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'md-reader-store-'))
+    const store = createReaderStore(join(tempDir, 'reader-store.json'))
+
+    await store.saveRecentFiles([
+      {
+        sourceType: 'path',
+        sourceKey: '/book/b.md',
+        sourceLabel: 'b.md',
+        filePath: '/book/b.md',
+        lastOpenedAt: 2
+      },
+      {
+        sourceType: 'path',
+        sourceKey: '/book/a.md',
+        sourceLabel: 'a.md',
+        filePath: '/book/a.md',
+        lastOpenedAt: 1
+      }
+    ])
+
+    const value = await store.loadRecentFiles()
+    expect(value.map((file) => file.sourceKey)).toEqual(['/book/b.md', '/book/a.md'])
+  })
+
   it('ignores invalid last opened session structure', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'md-reader-store-'))
     const storagePath = join(tempDir, 'reader-store.json')

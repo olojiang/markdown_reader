@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 
-import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition } from '../shared/reader-types'
+import type { ReaderLastOpenedSession, ReaderPreference, ReaderPosition, ReaderRecentFile } from '../shared/reader-types'
 import type { ReplacementRule } from '../shared/replacement-rules'
 import type { FolderSearchRequest } from '../shared/search-types'
 
@@ -145,6 +145,14 @@ if (hasSingleInstanceLock) {
 
   ipcMain.handle('reader:saveLastOpenedSession', async (_, value: ReaderLastOpenedSession | null): Promise<void> => {
     await readerStore.saveLastOpenedSession(value)
+  })
+
+  ipcMain.handle('reader:loadRecentFiles', async (): Promise<ReaderRecentFile[]> => {
+    return readerStore.loadRecentFiles()
+  })
+
+  ipcMain.handle('reader:saveRecentFiles', async (_, value: ReaderRecentFile[]): Promise<void> => {
+    await readerStore.saveRecentFiles(value)
   })
 
   ipcMain.handle('reader:debugLog', async (_, event: string, payload?: unknown): Promise<void> => {

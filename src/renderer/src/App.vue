@@ -5,6 +5,7 @@ import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 
 import { fixChapterOrder, parseMarkdownDocument } from '@shared/markdown-parser'
 import { DEFAULT_READER_PREFERENCE } from '@shared/reader-defaults'
+import { normalizeRecentFiles, stripRecentFileContent, upsertRecentFile } from '@shared/recent-files'
 import { READER_THEME_OPTIONS } from '@shared/reader-themes'
 import {
   applyReplacementRules,
@@ -18,6 +19,7 @@ import type {
   ReaderLastOpenedSession,
   ReaderPosition,
   ReaderPreference,
+  ReaderRecentFile,
   ReaderSessionTab,
   ReaderThemeKey,
   FixResult
@@ -40,6 +42,7 @@ const sampleFilePath =
 const READER_PREFERENCE_STORAGE_KEY = 'md-reader-preference-v1'
 const READER_POSITION_STORAGE_KEY = 'md-reader-position-v1'
 const READER_LAST_OPENED_STORAGE_KEY = 'md-reader-last-opened-v1'
+const READER_RECENT_FILES_STORAGE_KEY = 'md-reader-recent-files-v1'
 const READER_LAST_BOOK_TEXT_STORAGE_KEY = 'md-reader-last-book-text-v1'
 const READER_REPLACEMENT_RULES_STORAGE_KEY = 'md-reader-replacement-rules-v1'
 const READER_REPLACEMENT_RULE_TEXTS_STORAGE_KEY = 'md-reader-replacement-rule-texts-v1'
@@ -48,6 +51,7 @@ const READER_CACHE_DB_NAME = 'md-reader-cache-db'
 const READER_CACHE_STORE_NAME = 'reader-cache-store'
 const READER_CACHE_LAST_BOOK_KEY = 'last-book-v1'
 const MOBILE_READER_STORE_PATH = 'MarkdownReader/reader-store-v1.json'
+const MOBILE_READER_STORE_MAX_BYTES = 2 * 1024 * 1024
 
 const COMPACT_LAYOUT_MEDIA_QUERY = '(max-width: 900px)'
 
@@ -65,6 +69,7 @@ interface MobileReaderStoreData {
   replacementRuleTexts: Record<string, string>
   lastOpenedSession: ReaderLastOpenedSession | null
   lastBookSnapshot: ReaderCachedBookSnapshot | null
+  recentFiles: ReaderRecentFile[]
 }
 
 interface ReaderOpenTab extends ReaderSessionTab {
@@ -81,6 +86,7 @@ interface ReaderScrollState {
 
 const mdReaderPathInputModel = ref(sampleFilePath)
 const mdReaderTabs = ref<ReaderOpenTab[]>([])
+const mdReaderRecentFiles = ref<ReaderRecentFile[]>([])
 const mdReaderActiveTabId = ref('')
 const mdReaderCurrentSourceKey = ref('')
 const mdReaderParsedDocument = ref<ParsedDocument | null>(null)
@@ -170,6 +176,8 @@ watch(
 let savePositionTimer: number | null = null
 let compactLayoutMediaQuery: MediaQueryList | null = null
 let mobileReaderStoreCache: MobileReaderStoreData | null = null
+let mobileReaderBookSnapshotCache: ReaderCachedBookSnapshot | null = null
+let recentFilesLoadPromise: Promise<void> | null = null
 let draggedTabId = ''
 
 onMounted(() => {
@@ -179,6 +187,8 @@ onMounted(() => {
     initialTabsCount: mdReaderTabs.value.length
   })
   void loadPreference()
+  recentFilesLoadPromise = loadRecentFiles()
+  void recentFilesLoadPromise
   void restoreLastReadingSession()
   window.addEventListener('keydown', handleGlobalKeydown)
   window.addEventListener('beforeunload', handleBeforeUnload)
@@ -344,6 +354,7 @@ async function openMarkdownContentTab(input: {
 }): Promise<void> {
   const existingTab = mdReaderTabs.value.find((tab) => tab.sourceKey === input.sourceKey)
   if (existingTab) {
+    await touchRecentFile(existingTab)
     writeReaderDebugLog('tab:open-existing', {
       requested: summarizeTabInput(input),
       existingTabId: existingTab.id
@@ -368,12 +379,45 @@ async function openMarkdownContentTab(input: {
   }
 
   mdReaderTabs.value.push(tab)
+  await touchRecentFile(tab)
   writeReaderDebugLog('tab:open-new:pushed', {
     tab: summarizeTab(tab),
     tabs: summarizeOpenTabs()
   })
   await saveCurrentTabSession('open-new-tab')
   await activateReaderTab(tab.id)
+}
+
+async function openRecentFile(file: ReaderRecentFile): Promise<void> {
+  if (file.sourceType === 'path' && file.filePath && mdReaderSupportsPathOpen.value) {
+    await loadMarkdownFile(file.filePath)
+    return
+  }
+
+  if (file.sourceType === 'cachedText') {
+    const snapshot = typeof file.markdownText === 'string' ? {
+      sourceKey: file.sourceKey,
+      sourceLabel: file.sourceLabel,
+      markdownText: file.markdownText,
+      savedAt: file.lastOpenedAt
+    } : await loadLastBookSnapshot()
+
+    if (!snapshot || snapshot.sourceKey !== file.sourceKey) {
+      mdReaderStatusText.value = `无法打开最近文件：${displayRecentFileLabel(file)}`
+      return
+    }
+
+    await openMarkdownContentTab({
+      sourceType: 'cachedText',
+      sourceKey: file.sourceKey,
+      sourceLabel: file.sourceLabel,
+      markdownText: snapshot.markdownText,
+      savedMarkdownText: snapshot.markdownText
+    })
+    return
+  }
+
+  mdReaderStatusText.value = `无法打开最近文件：${displayRecentFileLabel(file)}`
 }
 
 async function activateReaderTab(tabId: string): Promise<void> {
@@ -748,7 +792,14 @@ function createReaderTabId(sourceKey: string): string {
 }
 
 function displayTabLabel(tab: ReaderSessionTab): string {
-  const label = tab.sourceLabel || tab.filePath || tab.sourceKey
+  return displaySourceLabel(tab.sourceLabel || tab.filePath || tab.sourceKey)
+}
+
+function displayRecentFileLabel(file: ReaderRecentFile): string {
+  return displaySourceLabel(file.sourceLabel || file.filePath || file.sourceKey)
+}
+
+function displaySourceLabel(label: string): string {
   const normalized = label.replace(/\\/g, '/')
   const lastSegment = normalized.split('/').filter(Boolean).at(-1)
   return lastSegment || label || '未命名'
@@ -1205,7 +1256,92 @@ async function saveLastOpenedSession(value: ReaderLastOpenedSession | null): Pro
   writeReaderDebugLog('session:persist:web-complete', summarizeSession(value))
 }
 
+async function loadRecentFiles(): Promise<void> {
+  if (mdReaderSupportsPathOpen.value) {
+    mdReaderRecentFiles.value = normalizeRecentFiles(await window.electronAPI.loadRecentFiles())
+    return
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mdReaderRecentFiles.value = stripRecentFileContent(mobileStore.recentFiles)
+    return
+  }
+
+  const raw = safeLocalStorageGet(READER_RECENT_FILES_STORAGE_KEY)
+  if (!raw) {
+    mdReaderRecentFiles.value = []
+    return
+  }
+
+  try {
+    mdReaderRecentFiles.value = normalizeRecentFiles(JSON.parse(raw))
+  } catch {
+    mdReaderRecentFiles.value = []
+  }
+}
+
+async function saveRecentFiles(value: ReaderRecentFile[]): Promise<void> {
+  const normalized = normalizeRecentFiles(value)
+  const persisted = mdReaderSupportsPathOpen.value ? normalized : stripRecentFileContent(normalized)
+  mdReaderRecentFiles.value = persisted
+
+  if (mdReaderSupportsPathOpen.value) {
+    await window.electronAPI.saveRecentFiles(normalized)
+    return
+  }
+
+  const mobileStore = await loadMobileReaderStore()
+  if (mobileStore) {
+    mobileStore.recentFiles = persisted
+    await saveMobileReaderStore(mobileStore)
+    return
+  }
+
+  safeLocalStorageSet(READER_RECENT_FILES_STORAGE_KEY, JSON.stringify(persisted))
+}
+
+async function touchRecentFile(file: ReaderOpenTab | ReaderSessionTab): Promise<void> {
+  if (recentFilesLoadPromise) {
+    await recentFilesLoadPromise
+  }
+
+  const recentFile: ReaderRecentFile = {
+    sourceType: file.sourceType,
+    sourceKey: file.sourceKey,
+    sourceLabel: file.sourceLabel,
+    ...(file.filePath ? { filePath: file.filePath } : {}),
+    ...('markdownText' in file && typeof file.markdownText === 'string' ? { markdownText: file.markdownText } : {}),
+    lastOpenedAt: Date.now()
+  }
+  await saveRecentFiles(upsertRecentFile(mdReaderRecentFiles.value, recentFile))
+}
+
 async function loadLastBookSnapshot(): Promise<ReaderCachedBookSnapshot | null> {
+  if (canUseMobileFilesystemStore()) {
+    if (mobileReaderBookSnapshotCache) {
+      return mobileReaderBookSnapshotCache
+    }
+
+    const indexedValue = await readReaderCacheValue(READER_CACHE_LAST_BOOK_KEY)
+    const normalizedIndexed = normalizeCachedBookSnapshot(indexedValue)
+    if (normalizedIndexed) {
+      mobileReaderBookSnapshotCache = normalizedIndexed
+      return normalizedIndexed
+    }
+
+    const mobileStore = await loadMobileReaderStore()
+    const legacySnapshot = mobileStore?.lastBookSnapshot ?? null
+    if (mobileStore && legacySnapshot) {
+      mobileReaderBookSnapshotCache = legacySnapshot
+      await writeReaderCacheValue(READER_CACHE_LAST_BOOK_KEY, legacySnapshot)
+      mobileStore.lastBookSnapshot = null
+      await saveMobileReaderStore(mobileStore)
+    }
+
+    return mobileReaderBookSnapshotCache
+  }
+
   const mobileStore = await loadMobileReaderStore()
   if (mobileStore) {
     return mobileStore.lastBookSnapshot
@@ -1231,6 +1367,18 @@ async function loadLastBookSnapshot(): Promise<ReaderCachedBookSnapshot | null> 
 }
 
 async function saveLastBookSnapshot(value: ReaderCachedBookSnapshot): Promise<void> {
+  if (canUseMobileFilesystemStore()) {
+    mobileReaderBookSnapshotCache = value
+    await writeReaderCacheValue(READER_CACHE_LAST_BOOK_KEY, value)
+
+    const mobileStore = await loadMobileReaderStore()
+    if (mobileStore) {
+      mobileStore.lastBookSnapshot = null
+      await saveMobileReaderStore(mobileStore)
+    }
+    return
+  }
+
   const mobileStore = await loadMobileReaderStore()
   if (mobileStore) {
     mobileStore.lastBookSnapshot = value
@@ -1350,6 +1498,24 @@ async function loadMobileReaderStore(): Promise<MobileReaderStoreData | null> {
   }
 
   try {
+    const fileInfo = await Filesystem.stat({
+      path: MOBILE_READER_STORE_PATH,
+      directory: Directory.Documents
+    })
+    const fileSize = Number(fileInfo.size)
+    if (Number.isFinite(fileSize) && fileSize > MOBILE_READER_STORE_MAX_BYTES) {
+      await Filesystem.rename({
+        from: MOBILE_READER_STORE_PATH,
+        to: `MarkdownReader/reader-store-v1.oversized-${Date.now()}.json`,
+        directory: Directory.Documents,
+        toDirectory: Directory.Documents
+      })
+      const emptyStore = createEmptyMobileReaderStore()
+      mobileReaderStoreCache = emptyStore
+      await saveMobileReaderStore(emptyStore)
+      return emptyStore
+    }
+
     const { data } = await Filesystem.readFile({
       path: MOBILE_READER_STORE_PATH,
       directory: Directory.Documents,
@@ -1358,6 +1524,11 @@ async function loadMobileReaderStore(): Promise<MobileReaderStoreData | null> {
 
     const text = typeof data === 'string' ? data : await data.text()
     const normalized = normalizeMobileReaderStoreData(JSON.parse(text))
+    if (normalized.lastBookSnapshot) {
+      mobileReaderBookSnapshotCache = normalized.lastBookSnapshot
+      await writeReaderCacheValue(READER_CACHE_LAST_BOOK_KEY, normalized.lastBookSnapshot)
+      normalized.lastBookSnapshot = null
+    }
     mobileReaderStoreCache = normalized
     return normalized
   } catch {
@@ -1374,17 +1545,34 @@ async function saveMobileReaderStore(value: MobileReaderStoreData): Promise<void
   }
 
   mobileReaderStoreCache = value
+  const persistedValue: MobileReaderStoreData = {
+    ...value,
+    lastBookSnapshot: null,
+    recentFiles: stripRecentFileContent(value.recentFiles)
+  }
 
   try {
     await Filesystem.writeFile({
       path: MOBILE_READER_STORE_PATH,
       directory: Directory.Documents,
-      data: JSON.stringify(value, null, 2),
+      data: JSON.stringify(persistedValue, null, 2),
       encoding: Encoding.UTF8,
       recursive: true
     })
   } catch {
     // Ignore write failures and keep in-memory/app storage behavior usable.
+  }
+}
+
+function createEmptyMobileReaderStore(): MobileReaderStoreData {
+  return {
+    positions: {},
+    preference: null,
+    replacementRules: {},
+    replacementRuleTexts: {},
+    lastOpenedSession: null,
+    lastBookSnapshot: null,
+    recentFiles: []
   }
 }
 
@@ -1396,7 +1584,8 @@ function normalizeMobileReaderStoreData(raw: unknown): MobileReaderStoreData {
       replacementRules: {},
       replacementRuleTexts: {},
       lastOpenedSession: null,
-      lastBookSnapshot: null
+      lastBookSnapshot: null,
+      recentFiles: []
     }
   }
 
@@ -1420,13 +1609,22 @@ function normalizeMobileReaderStoreData(raw: unknown): MobileReaderStoreData {
     }
   }
 
+  const lastBookSnapshot = normalizeCachedBookSnapshot(candidate.lastBookSnapshot)
+  const recentFiles = stripRecentFileContent(normalizeRecentFiles(candidate.recentFiles))
+
   return {
     positions: normalizedPositions,
     preference: normalizeReaderPreference(candidate.preference ?? {}),
     replacementRules: normalizeStoredMobileReplacementRules(candidate.replacementRules),
     replacementRuleTexts: normalizeStoredMobileReplacementRuleTexts(candidate.replacementRuleTexts),
     lastOpenedSession: normalizeLastOpenedSession(candidate.lastOpenedSession),
-    lastBookSnapshot: normalizeCachedBookSnapshot(candidate.lastBookSnapshot)
+    lastBookSnapshot,
+    recentFiles: recentFiles.length > 0 || !lastBookSnapshot ? recentFiles : [{
+      sourceType: 'cachedText',
+      sourceKey: lastBookSnapshot.sourceKey,
+      sourceLabel: lastBookSnapshot.sourceLabel,
+      lastOpenedAt: lastBookSnapshot.savedAt
+    }]
   }
 }
 
@@ -1463,6 +1661,25 @@ function buildLegacyWebStoreSnapshot(): MobileReaderStoreData {
     }
   }
 
+  let recentFiles: ReaderRecentFile[] = []
+  const rawRecentFiles = safeLocalStorageGet(READER_RECENT_FILES_STORAGE_KEY)
+  if (rawRecentFiles) {
+    try {
+      recentFiles = normalizeRecentFiles(JSON.parse(rawRecentFiles))
+    } catch {
+      recentFiles = []
+    }
+  }
+
+  if (recentFiles.length === 0 && lastBookSnapshot) {
+    recentFiles = [{
+      sourceType: 'cachedText',
+      sourceKey: lastBookSnapshot.sourceKey,
+      sourceLabel: lastBookSnapshot.sourceLabel,
+      lastOpenedAt: lastBookSnapshot.savedAt
+    }]
+  }
+
   let replacementRules: Record<string, ReplacementRule[]> = {}
   const rawReplacementRules = safeLocalStorageGet(READER_REPLACEMENT_RULES_STORAGE_KEY)
   if (rawReplacementRules) {
@@ -1489,7 +1706,8 @@ function buildLegacyWebStoreSnapshot(): MobileReaderStoreData {
     replacementRules,
     replacementRuleTexts,
     lastOpenedSession,
-    lastBookSnapshot
+    lastBookSnapshot,
+    recentFiles: stripRecentFileContent(recentFiles)
   }
 }
 
@@ -1915,8 +2133,11 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
         <details v-if="mdReaderShowSettingsPanel" class="md-reader-sidebar-panel-details" open>
           <summary class="md-reader-sidebar-panel-summary">阅读样式</summary>
           <section class="md-reader-sidebar-panel-content-section" aria-label="阅读样式面板">
-            <section v-if="mdReaderIsCompactLoadedMode" class="md-reader-compact-file-shell-section" aria-label="移动端文件控制">
+            <section class="md-reader-compact-file-shell-section" aria-label="文件控制">
               <p class="md-reader-compact-file-title">文件</p>
+              <p class="md-reader-current-file-summary" data-testid="md-reader-current-file">
+                当前打开：<strong>{{ mdReaderActiveTab ? displayTabLabel(mdReaderActiveTab) : '未打开文件' }}</strong>
+              </p>
               <form class="md-reader-open-form" @submit.prevent="openMarkdownByPath" aria-label="移动端打开 Markdown 文件">
                 <template v-if="mdReaderSupportsPathOpen">
                   <label class="md-reader-open-form-label" for="md-reader-compact-path-input">Markdown 路径</label>
@@ -1947,6 +2168,24 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
                   </button>
                 </div>
               </form>
+              <section v-if="mdReaderRecentFiles.length > 0" class="md-reader-recent-files-section" aria-label="最近打开的文件">
+                <p class="md-reader-recent-files-title">最近打开（{{ mdReaderRecentFiles.length }}/10）</p>
+                <ol class="md-reader-recent-files-list">
+                  <li v-for="file in mdReaderRecentFiles" :key="file.sourceKey" class="md-reader-recent-file-item">
+                    <button
+                      type="button"
+                      class="md-reader-recent-file-button"
+                      :class="{ 'md-reader-recent-file-button-active': file.sourceKey === mdReaderCurrentSourceKey }"
+                      :disabled="mdReaderIsLoading"
+                      :aria-current="file.sourceKey === mdReaderCurrentSourceKey ? 'page' : undefined"
+                      :title="file.sourceLabel"
+                      @click="openRecentFile(file)"
+                    >
+                      {{ displayRecentFileLabel(file) }}
+                    </button>
+                  </li>
+                </ol>
+              </section>
             </section>
             <ReaderSettings
               :preference="mdReaderPreference"
@@ -2460,6 +2699,64 @@ function navigateToLineInCurrentDocument(markdownText: string, lineNumber: numbe
   font-size: 13px;
   font-weight: 700;
   color: var(--md-text-subtle);
+}
+
+.md-reader-current-file-summary {
+  margin: 0 0 8px;
+  overflow: hidden;
+  color: var(--md-text-main);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-reader-recent-files-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(140, 122, 87, 0.28);
+}
+
+.md-reader-recent-files-title {
+  margin: 0 0 6px;
+  color: var(--md-text-subtle);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.md-reader-recent-files-list {
+  display: grid;
+  gap: 5px;
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.md-reader-recent-file-button {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.74);
+  color: var(--md-text-main);
+  cursor: pointer;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-reader-recent-file-button:hover:not(:disabled),
+.md-reader-recent-file-button-active {
+  border-color: var(--md-stroke-strong);
+  background: var(--md-accent-weak);
+}
+
+.md-reader-recent-file-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .md-reader-workspace-main {

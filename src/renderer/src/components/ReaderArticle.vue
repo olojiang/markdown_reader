@@ -38,6 +38,8 @@ const mdParser = new MarkdownIt({
   breaks: true
 })
 mdParser.disable('lheading')
+mdParser.renderer.rules.s_open = () => ''
+mdParser.renderer.rules.s_close = () => ''
 
 const mdReaderArticleBodyRef = ref<HTMLElement | null>(null)
 const readerPageOverlapLines = 2

@@ -32,6 +32,15 @@ export interface ReaderSessionTab {
   filePath?: string
 }
 
+export interface ReaderRecentFile {
+  sourceType: 'path' | 'cachedText'
+  sourceKey: string
+  sourceLabel: string
+  filePath?: string
+  markdownText?: string
+  lastOpenedAt: number
+}
+
 export type ReaderThemeKey = 'day' | 'night' | 'eyeCare'
 
 export interface ReaderPreference {
